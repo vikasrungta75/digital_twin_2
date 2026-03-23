@@ -26,9 +26,12 @@ import DateFilterBar from './DateFilterBar';
 // qac_kpi_baseline_data tables.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Always use the relative proxy path:
+//   Vercel:    resolved by vercel.json rewrite  /bizviz-proxy/* → platform.ravity.io/cxf/bizvizllm/*
+//   Local dev: resolved by setupProxy.js        /bizviz-proxy/* → platform.ravity.io/cxf/bizvizllm/*
+// Never call platform.ravity.io directly from the browser — CORS blocks it.
 const BIZVIZ_ENDPOINT =
-  process.env.REACT_APP_BIZVIZ_ENDPOINT ||
-  'https://platform.ravity.io/cxf/bizvizllm/llmService';
+  process.env.REACT_APP_BIZVIZ_ENDPOINT || '/bizviz-proxy/llmService';
 
 const BIZVIZ_SPACE_KEY =
   process.env.REACT_APP_BIZVIZ_SPACE_KEY || '5129';

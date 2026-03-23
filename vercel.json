@@ -19,6 +19,10 @@
       "destination": "https://iot.ravity.io/:path*"
     },
     {
+      "source": "/bizviz-proxy/:path*",
+      "destination": "https://platform.ravity.io/cxf/bizvizllm/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
