@@ -1,470 +1,603 @@
-import React, { FC, useCallback, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
 
-// ─── Ravity BizWiz LLM Configuration ─────────────────────────────────────────
-// BizWiz is a SQL Intelligence Agent — it takes a SHORT natural-language question,
-// generates SQL against the connected tables internally, and returns interpreted results.
-// DO NOT send large data payloads in `text`. Send concise questions only.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const BIZVIZ_ENDPOINT =
-  process.env.REACT_APP_BIZVIZ_ENDPOINT || '/bizviz-proxy/llmService';
-
-const BIZVIZ_SPACE_KEY  = process.env.REACT_APP_BIZVIZ_SPACE_KEY  || '5129';
-const BIZVIZ_USER_ID    = process.env.REACT_APP_BIZVIZ_USER_ID    || '1217690654';
-const BIZVIZ_ASSIST_ID  = process.env.REACT_APP_BIZVIZ_ASSIST_ID  || '3514581148';
-const BIZVIZ_CONNECTOR  = process.env.REACT_APP_BIZVIZ_CONNECTOR  || '238893540';
-const BIZVIZ_TABLES     = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
-
-const BIZVIZ_AUTH_TOKEN_DEFAULT = process.env.REACT_APP_BIZVIZ_AUTH_TOKEN || '';
-
-// System description — matches what the assistant was configured with
-const VDTSIA_DESCRIPTION =
+// ─── BizWiz Digital Twin Config ───────────────────────────────────────────────
+const BIZVIZ_ENDPOINT      = '/bizviz-proxy/llmService';
+const BIZVIZ_SPACE_KEY     = process.env.REACT_APP_BIZVIZ_SPACE_KEY  || '5129';
+const BIZVIZ_USER_ID       = process.env.REACT_APP_BIZVIZ_USER_ID    || '1217690654';
+const BIZVIZ_ASSIST_ID     = process.env.REACT_APP_BIZVIZ_ASSIST_ID  || '3514581148';
+const BIZVIZ_CONNECTOR     = process.env.REACT_APP_BIZVIZ_CONNECTOR  || '238893540';
+const BIZVIZ_TABLES        = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+const BIZVIZ_DESCRIPTION   =
   'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) ' +
   'PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ' +
-  'ARCHITECTURE: Privacy-first, SQL-native, on-premise execution ' +
-  'MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki ' +
-  'You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. ' +
-  'Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, ' +
-  'warranty risk, fleet performance, and operational costs using the connected SQL tables.';
+  'MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki. ' +
+  'Answer questions about vehicle health, driver behaviour, fuel efficiency, ' +
+  'DTC faults, warranty risk, and fleet benchmarks using SQL on connected tables.';
 
-const makeSessionId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-
-// ─── Preset analysis questions ────────────────────────────────────────────────
-// These are short natural-language questions BizWiz can SQL-query directly.
-const PRESET_QUESTIONS = [
-  { label: '📋 Full Vehicle Summary',       text: (vin: string, start: string, end: string) => `Give me a complete vehicle health and performance summary for VIN ${vin} between ${start} and ${end}` },
-  { label: '🏎️ Driving Behaviour',          text: (vin: string, start: string, end: string) => `Analyse driving behaviour for VIN ${vin} from ${start} to ${end} including harsh acceleration, harsh braking, overspeeding and harsh turns` },
-  { label: '⛽ Fuel & Efficiency',           text: (vin: string, start: string, end: string) => `What is the fuel efficiency and fuel events analysis for VIN ${vin} between ${start} and ${end}` },
-  { label: '🔴 DTC Fault Codes',            text: (vin: string, start: string, end: string) => `List all DTC fault codes and their severity for VIN ${vin} from ${start} to ${end}` },
-  { label: '🔧 Maintenance Recommendations',text: (vin: string, start: string, end: string) => `What maintenance actions are recommended for VIN ${vin} based on data from ${start} to ${end}` },
-  { label: '🛡️ Warranty Risk',              text: (vin: string, start: string, end: string) => `Assess warranty risk for VIN ${vin} based on driving patterns and fault codes from ${start} to ${end}` },
-  { label: '📊 Fleet Benchmark',            text: (vin: string, start: string, end: string) => `How does VIN ${vin} compare to fleet baseline benchmarks for the period ${start} to ${end}` },
-  { label: '⚠️ Safety Alerts',              text: (vin: string, start: string, end: string) => `Identify any safety concerns or critical alerts for VIN ${vin} from ${start} to ${end}` },
+// ─── Suggested questions — Digital Twin context ───────────────────────────────
+const INITIAL_SUGGESTIONS = [
+  'What is the fuel efficiency trend for this vehicle over the selected period?',
+  'Show me all active DTC fault codes and their severity',
+  'How does this vehicle compare to the fleet baseline for harsh driving events?',
+  'What are the top maintenance recommendations based on recent data?',
 ];
 
-// ─── Single BizWiz call ───────────────────────────────────────────────────────
-const callBizWiz = async (
-  authToken: string,
-  question: string,
-  sessionId: string,
-  log: (m: string) => void
-): Promise<string> => {
-  log('🔗 Sending to Ravity BizWiz LLM...');
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface Message {
+  role: 'user' | 'assistant';
+  text: string;
+  htmlContent?: string;
+  suggestions?: string[];
+  isError?: boolean;
+  timestamp: Date;
+}
 
-  const body = new URLSearchParams();
-  body.append('serviceType', 'process_text');
-  body.append('data', JSON.stringify({
-    text:             question,
-    userID:           BIZVIZ_USER_ID,
-    sessionID:        sessionId,
-    assistId:         BIZVIZ_ASSIST_ID,
-    connector:        BIZVIZ_CONNECTOR,
-    description:      VDTSIA_DESCRIPTION,
-    tables:           BIZVIZ_TABLES,
-    selected_files:   [],
-    type:             'connector',
-    documentStoreIds: BIZVIZ_TABLES,
-    spaceKey:         BIZVIZ_SPACE_KEY,
-  }));
-  body.append('spacekey', BIZVIZ_SPACE_KEY);
-
-  const res = await fetch(BIZVIZ_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'authtoken':    authToken.trim(),
-      'spacekey':     BIZVIZ_SPACE_KEY,
-      'userid':       BIZVIZ_USER_ID,
-      'accept':       'application/json, text/plain, */*',
-    },
-    body: body.toString(),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`BizWiz returned ${res.status}: ${errText.slice(0, 300)}`);
-  }
-
-  const contentType = res.headers.get('content-type') || '';
-  let text = '';
-  if (contentType.includes('application/json')) {
-    const data = await res.json();
-    text = data?.response || data?.answer || data?.text || data?.message || data?.result ||
-           (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
-  } else {
-    text = await res.text();
-  }
-
-  if (!text || text.trim().length === 0)
-    throw new Error('BizWiz returned an empty response. The authtoken may have expired.');
-
-  log(`✅ Response received (${text.length.toLocaleString()} chars)`);
-  return text;
+// ─── Response parser (matches fleet copilot logic) ────────────────────────────
+const safeParseData = (data: any): any[] => {
+  if (!data) return [];
+  try {
+    if (Array.isArray(data)) return data;
+    if (typeof data === 'object') return [data];
+    if (typeof data === 'string') {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === 'object') return [parsed];
+    }
+  } catch {}
+  return [];
 };
 
-// ─── Severity helper ──────────────────────────────────────────────────────────
-type Severity = 'good' | 'warning' | 'critical' | 'info';
+const buildTableHTML = (parsedData: any[]): string => {
+  if (!parsedData.length) return '';
+  const keys = Object.keys(parsedData[0]);
+  const fmtKey = (k: string) =>
+    k.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const headers = keys.map(k => `<th>${fmtKey(k)}</th>`).join('');
+  const rows = parsedData
+    .map(row => `<tr>${keys.map(k => `<td>${row[k] ?? '—'}</td>`).join('')}</tr>`)
+    .join('');
+  return `
+    <div class="dt-table-wrap">
+      <table class="dt-table">
+        <thead><tr>${headers}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+};
 
-const detectSeverity = (text: string): Severity =>
-  text.includes('🔴') || /critical|immediate/i.test(text) ? 'critical'
-  : text.includes('⚠️') || /warning|concern|risk/i.test(text) ? 'warning'
-  : /good|normal|excellent|compliant/i.test(text) ? 'good'
-  : 'info';
+const parseResponse = (raw: any): { html: string; suggestions: string[] } => {
+  let parsed: any;
+  try { parsed = JSON.parse(raw?.response ?? raw); }
+  catch { parsed = { html: raw?.response ?? String(raw) }; }
 
-const sevStyle = (s: Severity) => ({
-  good:     { border: '#a5d6a7', bg: '#f1f8e9', badge: '#2e7d32', badgeBg: '#e8f5e9' },
-  warning:  { border: '#ffe082', bg: '#fffde7', badge: '#f57f17', badgeBg: '#fff9c4' },
-  critical: { border: '#ef9a9a', bg: '#ffebee', badge: '#c62828', badgeBg: '#ffcdd2' },
-  info:     { border: '#90caf9', bg: '#e3f2fd', badge: '#1565c0', badgeBg: '#bbdefb' },
-}[s]);
+  if (parsed?.html) return { html: parsed.html, suggestions: [] };
 
-interface ResultCard { label: string; question: string; answer: string; severity: Severity; }
+  // Strip noise fields
+  delete parsed?.query;
+  delete parsed?.dashboards;
+  delete parsed?.data_refreshed_at;
 
-const RAVITY = '#e91e8c';
+  const tableHTML   = buildTableHTML(safeParseData(parsed?.data));
+  const viz         = parsed?.visualization || {};
+  const answer      = viz.Answer   || viz.answer   || '';
+  const analysis    = viz.Analysis || viz.analysis || '';
+  const explanation = parsed?.explanation ? `<p>${parsed.explanation}</p>` : '';
+
+  const rawSugg = viz.Suggestions || viz.suggestions || '';
+  const suggestions: string[] = Array.isArray(rawSugg)
+    ? rawSugg
+    : String(rawSugg).split(',').map((s: string) => s.trim()).filter(Boolean);
+
+  const html = `${tableHTML}${answer}${analysis}${explanation}` || 'No response available.';
+  return { html, suggestions };
+};
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-const AiAnalysisDashboard: FC = () => {
-  const { vin, apiParams } = useDt();
+const AiAnalysisDashboard: React.FC = () => {
+  const { vin, apiParams }  = useDt();
+  const { token, user }     = useSelector((state: any) => state.auth);
 
-  const [authToken,  setAuthToken]  = useState(BIZVIZ_AUTH_TOKEN_DEFAULT);
-  const [showToken,  setShowToken]  = useState(false);
-  const [sessionId]                 = useState(makeSessionId);
+  const [messages,    setMessages]    = useState<Message[]>([]);
+  const [inputText,   setInputText]   = useState('');
+  const [loading,     setLoading]     = useState(false);
+  const [sessionId,   setSessionId]   = useState<string>('');
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [chatHistory, setChatHistory] = useState<{ context: string; session_id: string }[]>([]);
+  const [hoveredHist, setHoveredHist] = useState<number | null>(null);
+  const [trigger,     setTrigger]     = useState(0);
 
-  // Which preset questions are selected
-  const [selected,   setSelected]   = useState<Set<number>>(new Set([0]));
-  // Custom question input
-  const [customQ,    setCustomQ]    = useState('');
+  const chatEndRef   = useRef<HTMLDivElement>(null);
+  const inputRef     = useRef<HTMLInputElement>(null);
 
-  const [loading,    setLoading]    = useState(false);
-  const [results,    setResults]    = useState<ResultCard[]>([]);
-  const [error,      setError]      = useState('');
-  const [log,        setLog]        = useState<string[]>([]);
-  const [progress,   setProgress]   = useState(0);
-  const [expanded,   setExpanded]   = useState<Record<number, boolean>>({ 0: true });
-  const [trigger,    setTrigger]    = useState(0);
+  // ── Auto-scroll ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
-  const addLog = (m: string) => setLog(prev => [...prev, m]);
-
-  const toggleSelect = (i: number) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  };
-
-  const runAnalysis = useCallback(async () => {
-    if (!authToken.trim()) { setError('Please enter your Ravity BizWiz authtoken.'); return; }
-    if (!vin) { setError('No VIN selected. Please select a vehicle first.'); return; }
-
-    // Build list of questions to ask
-    const questions: { label: string; question: string }[] = [];
-    PRESET_QUESTIONS.forEach((p, i) => {
-      if (selected.has(i))
-        questions.push({ label: p.label, question: p.text(vin, apiParams.startdate, apiParams.enddate) });
-    });
-    if (customQ.trim())
-      questions.push({ label: '💬 Custom Question', question: customQ.trim() });
-
-    if (questions.length === 0) { setError('Select at least one analysis topic or enter a custom question.'); return; }
-
-    setLoading(true); setError(''); setResults([]); setLog([]); setProgress(0); setExpanded({ 0: true });
-
-    const answers: ResultCard[] = [];
-    for (let i = 0; i < questions.length; i++) {
-      const { label, question } = questions[i];
-      addLog(`📊 [${i + 1}/${questions.length}] ${label}...`);
-      try {
-        const answer = await callBizWiz(authToken, question, sessionId, addLog);
-        answers.push({ label, question, answer, severity: detectSeverity(answer) });
-      } catch (e: any) {
-        answers.push({ label, question, answer: `❌ ${e.message}`, severity: 'critical' });
-        addLog(`❌ Failed: ${e.message}`);
-      }
-      setProgress(Math.round(((i + 1) / questions.length) * 100));
-      setResults([...answers]);
-      // Small delay between calls to avoid rate limiting
-      if (i < questions.length - 1) await new Promise(r => setTimeout(r, 800));
+  // ── Session ID — persisted per user ─────────────────────────────────────────
+  useEffect(() => {
+    const userId = user?.user?.id || user?.user?.userId || BIZVIZ_USER_ID;
+    const key    = `dt_session_${userId}`;
+    let sid      = localStorage.getItem(key);
+    if (!sid) {
+      sid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      localStorage.setItem(key, sid);
     }
+    setSessionId(sid);
+  }, [user]);
 
-    addLog(`✅ All ${questions.length} analyses complete`);
-    setLoading(false);
-  }, [vin, apiParams, authToken, sessionId, selected, customQ]); // eslint-disable-line
+  // ── Fetch chat history ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const fetchHistory = async () => {
+      const userId = user?.user?.id || user?.user?.userId;
+      if (!userId) return;
+      try {
+        const res = await fetch(
+          `/rest-proxy/vc_chat_history_older?user_id=${userId}`,
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              clientid:     'GSUSJGITCDXHEDBNLIUD@5129',
+              appname:      'demo',
+              clientsecret: 'GSVDOAFXOXAAFTONROLX1774026824090',
+            },
+          }
+        );
+        if (!res.ok) return;
+        const text = await res.text();
+        const data = text.startsWith('{') || text.startsWith('[') ? JSON.parse(text) : [];
+        setChatHistory(Array.isArray(data) ? data : []);
+      } catch {}
+    };
+    fetchHistory();
+  }, [user]);
 
-  const downloadReport = () => {
-    const hdr = `VEHICLE DIGITAL TWIN — AI ANALYSIS REPORT\n${'='.repeat(60)}\nVIN: ${vin}\nPeriod: ${apiParams.startdate} to ${apiParams.enddate}\nProvider: Ravity BizWiz LLM (VDTSIA)\nGenerated: ${new Date().toLocaleString()}\n${'='.repeat(60)}\n\n`;
-    const body = results.map(r => `## ${r.label}\nQuestion: ${r.question}\n\n${r.answer}\n\n${'─'.repeat(60)}\n`).join('\n');
-    const blob = new Blob([hdr + body], { type: 'text/plain' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.download = `AI_Analysis_${vin}_${apiParams.startdate}.txt`;
-    a.href = url; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // ── Load history session into chat ──────────────────────────────────────────
+  const loadHistorySession = async (histSessionId: string) => {
+    const userId = user?.user?.id || user?.user?.userId;
+    if (!userId) return;
+    setLoading(true);
+    setMessages([]);
+    try {
+      const res = await fetch(
+        `/rest-proxy/vc_chat_history?user_id=${userId}&session_id=${histSessionId}`,
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            clientid:     'GSUSJGITCDXHEDBNLIUD@5129',
+            appname:      'demo',
+            clientsecret: 'GSVDOAFXOXAAFTONROLX1774026824090',
+          },
+        }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const rebuilt: Message[] = [];
+      for (const item of data) {
+        let fp: any = {};
+        try { fp = JSON.parse(item.response); } catch { fp = { response: item.response }; }
+        let sp: any = {};
+        try { sp = JSON.parse(fp.response); } catch { sp = fp; }
+        const { html, suggestions } = parseResponse(sp);
+        rebuilt.push({ role: 'user',      text: item.question, timestamp: new Date() });
+        rebuilt.push({ role: 'assistant', text: '', htmlContent: html, suggestions, timestamp: new Date() });
+      }
+      setMessages(rebuilt);
+      setSessionId(histSessionId);
+    } catch {}
+    finally { setLoading(false); }
   };
 
-  const page: React.CSSProperties = { padding: '20px 24px', background: '#f7f8fa', minHeight: '100vh', width: '100%', boxSizing: 'border-box' };
-  const secHdr: React.CSSProperties = { color: RAVITY, fontWeight: 800, fontSize: 15, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5, borderLeft: `4px solid ${RAVITY}`, paddingLeft: 10 };
+  // ── Delete history session ───────────────────────────────────────────────────
+  const deleteHistorySession = async (e: React.MouseEvent, sid: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this chat history?')) return;
+    const userId   = user?.user?.id || user?.user?.userId;
+    const spaceKey = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
+    try {
+      await fetch('/ingestion-proxy/ingestion/dataIngestion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json',
+          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
+          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
+        },
+        body: JSON.stringify({
+          question: '', response: '', user_id: userId, action: 'delete',
+          session_id: sid, spacekey: spaceKey,
+          user_name:  user?.user?.fullName  || 'Unknown',
+          user_email: user?.user?.emailID   || 'unknown@ravity.io',
+        }),
+      });
+      setChatHistory(prev => prev.filter(h => h.session_id !== sid));
+    } catch {}
+  };
+
+  // ── Send message ─────────────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? inputText).trim();
+    if (!text || loading) return;
+
+    // Inject VIN + date context automatically
+    const contextualText =
+      `[VIN: ${vin || 'not selected'} | Period: ${apiParams.startdate} to ${apiParams.enddate}] ${text}`;
+
+    setInputText('');
+    setMessages(prev => [...prev, { role: 'user', text, timestamp: new Date() }]);
+    setLoading(true);
+
+    const authToken = token;
+    const userId    = user?.user?.id || user?.user?.userId || BIZVIZ_USER_ID;
+    const spaceKey  = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
+    const sid       = sessionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    try {
+      const body = new URLSearchParams({
+        serviceType: 'process_text',
+        data: JSON.stringify({
+          text:             contextualText,
+          userID:           userId,
+          sessionID:        sid,
+          assistId:         BIZVIZ_ASSIST_ID,
+          connector:        BIZVIZ_CONNECTOR,
+          description:      BIZVIZ_DESCRIPTION,
+          tables:           BIZVIZ_TABLES,
+          selected_files:   [],
+          type:             'connector',
+          documentStoreIds: BIZVIZ_TABLES,
+          spaceKey:         spaceKey,
+        }),
+        spacekey: spaceKey,
+      });
+
+      const res = await fetch(BIZVIZ_ENDPOINT, {
+        method:  'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          accept:         'application/json, text/plain, */*',
+          authtoken:      authToken,
+          spacekey:       spaceKey,
+          userid:         String(userId),
+        },
+        body,
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`BizWiz ${res.status}: ${err.slice(0, 200)}`);
+      }
+
+      const data                      = await res.json();
+      const { html, suggestions }     = parseResponse(data);
+
+      setMessages(prev => [...prev, {
+        role: 'assistant', text: '', htmlContent: html, suggestions, timestamp: new Date(),
+      }]);
+
+      // Add to sidebar history
+      setChatHistory(prev => [{ context: text, session_id: sid }, ...prev.slice(0, 49)]);
+
+      // Ingestion (fire-and-forget)
+      fetch('/ingestion-proxy/ingestion/dataIngestion', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json',
+          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
+          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
+        },
+        body: JSON.stringify({
+          question:   text,
+          response:   JSON.stringify(data),
+          user_id:    userId,
+          action:     'add',
+          session_id: sid,
+          spacekey:   spaceKey,
+          user_name:  user?.user?.fullName  || 'Unknown',
+          user_email: user?.user?.emailID   || 'unknown@ravity.io',
+        }),
+      }).catch(() => {});
+
+    } catch (err: any) {
+      setMessages(prev => [...prev, {
+        role: 'assistant', text: err.message || 'Something went wrong.', isError: true, timestamp: new Date(),
+      }]);
+    } finally {
+      setLoading(false);
+      inputRef.current?.focus();
+    }
+  }, [inputText, loading, vin, apiParams, token, user, sessionId]);
+
+  const startNewChat = () => {
+    setMessages([]);
+    setInputText('');
+    const userId = user?.user?.id || user?.user?.userId || BIZVIZ_USER_ID;
+    const newSid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setSessionId(newSid);
+    localStorage.setItem(`dt_session_${userId}`, newSid);
+  };
+
+  const firstName = user?.user?.fullName?.split(' ')[0] || 'there';
+  const showWelcome = messages.length === 0;
 
   return (
-    <div style={page} id="dt-page-content">
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <h1 style={{ color: RAVITY, fontWeight: 900, fontSize: 26, marginBottom: 4 }}>🤖 AI Vehicle Analysis</h1>
-      <p style={{ color: '#888', fontSize: 13, marginBottom: 20 }}>
-        Powered by <strong style={{ color: RAVITY }}>Ravity BizWiz LLM</strong> — VDTSIA (Vehicle Digital Twin SQL Intelligence Agent)
-      </p>
+    <>
+      <style>{`
+        .dt-copilot-wrap { display:flex; height:calc(100vh - 72px); font-family:'DM Sans',sans-serif; background:#0f0f13; overflow:hidden; }
 
-      <DateFilterBar title="AI Analysis" onApply={() => setTrigger(prev => prev + 1)} />
+        /* ── Sidebar ── */
+        .dt-sidebar { width:260px; min-width:260px; background:#17171f; border-right:1px solid #2a2a38; display:flex; flex-direction:column; transition:width 0.25s; overflow:hidden; }
+        .dt-sidebar.collapsed { width:56px; min-width:56px; }
+        .dt-sidebar-btn { display:flex; align-items:center; gap:10px; padding:14px 16px; color:#9090b0; font-size:13px; font-weight:600; cursor:pointer; border-bottom:1px solid #2a2a38; transition:background 0.15s,color 0.15s; white-space:nowrap; }
+        .dt-sidebar-btn:hover { background:#1f1f2e; color:#fff; }
+        .dt-sidebar-btn .icon { font-size:16px; flex-shrink:0; }
+        .dt-hist-list { flex:1; overflow-y:auto; padding:8px; }
+        .dt-hist-list::-webkit-scrollbar { width:4px; } .dt-hist-list::-webkit-scrollbar-track { background:transparent; } .dt-hist-list::-webkit-scrollbar-thumb { background:#2a2a38; border-radius:4px; }
+        .dt-hist-item { display:flex; align-items:center; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; color:#8080a0; font-size:12px; transition:all 0.15s; margin-bottom:2px; }
+        .dt-hist-item:hover { background:#1f1f2e; color:#e0e0f0; }
+        .dt-hist-item span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .dt-hist-del { flex-shrink:0; background:none; border:none; color:transparent; cursor:pointer; font-size:14px; padding:2px 4px; border-radius:4px; transition:all 0.15s; }
+        .dt-hist-item:hover .dt-hist-del { color:#ff4d4d; }
+        .dt-hist-del:hover { background:#3a1a1a; }
+        .dt-collapse-btn { padding:14px 16px; border-top:1px solid #2a2a38; color:#555570; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:8px; transition:color 0.15s; }
+        .dt-collapse-btn:hover { color:#9090b0; }
 
-      {/* ── Auth Panel ── */}
-      <div style={{ background: '#fff', borderRadius: 14, padding: '20px 24px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', marginBottom: 20 }}>
-        <div style={secHdr}>🔐 BizWiz Authentication</div>
+        /* ── Chat main ── */
+        .dt-chat-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 
-        {/* Service info */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-          {[
-            { label: 'Endpoint', value: 'platform.ravity.io' },
-            { label: 'Space',    value: `#${BIZVIZ_SPACE_KEY}` },
-            { label: 'Assist',   value: BIZVIZ_ASSIST_ID },
-            { label: 'VIN',      value: vin || '— not selected —' },
-          ].map(b => (
-            <div key={b.label} style={{ background: '#f5f5f5', borderRadius: 8, padding: '5px 12px', fontSize: 12 }}>
-              <span style={{ color: '#888', fontWeight: 600 }}>{b.label}: </span>
-              <span style={{ color: vin || b.label !== 'VIN' ? '#333' : '#e91e8c', fontFamily: 'monospace', fontWeight: b.label === 'VIN' ? 700 : 400 }}>{b.value}</span>
+        /* Context bar */
+        .dt-context-bar { display:flex; align-items:center; gap:0; padding:0; border-bottom:1px solid #1e1e2a; background:#13131b; flex-shrink:0; }
+        .dt-ctx-pill { display:flex; align-items:center; gap:7px; padding:10px 20px; font-size:12px; font-weight:600; border-right:1px solid #1e1e2a; }
+        .dt-ctx-pill .label { color:#555570; text-transform:uppercase; letter-spacing:0.6px; font-size:10px; }
+        .dt-ctx-pill .value { color:#e91e8c; font-family:'DM Mono',monospace; font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .dt-ctx-pill .value.dim { color:#6060a0; }
+        .dt-datefilter-wrap { padding:0 16px; display:flex; align-items:center; }
+
+        /* Messages */
+        .dt-messages { flex:1; overflow-y:auto; padding:24px 32px; display:flex; flex-direction:column; gap:20px; }
+        .dt-messages::-webkit-scrollbar { width:5px; } .dt-messages::-webkit-scrollbar-track { background:transparent; } .dt-messages::-webkit-scrollbar-thumb { background:#2a2a38; border-radius:4px; }
+
+        /* Welcome */
+        .dt-welcome { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 32px; text-align:center; }
+        .dt-welcome-logo { width:52px; height:52px; border-radius:14px; background:linear-gradient(135deg,#e91e8c,#c2185b); display:flex; align-items:center; justify-content:center; font-size:24px; margin:0 auto 20px; box-shadow:0 8px 32px #e91e8c44; }
+        .dt-welcome h2 { color:#e0e0f0; font-size:22px; font-weight:700; margin:0 0 8px; }
+        .dt-welcome p { color:#6060a0; font-size:14px; margin:0 0 32px; max-width:420px; line-height:1.6; }
+        .dt-vin-badge { display:inline-flex; align-items:center; gap:6px; background:#1f1f2e; border:1px solid #2a2a38; border-radius:20px; padding:6px 14px; font-size:12px; color:#9090b0; margin-bottom:28px; }
+        .dt-vin-badge strong { color:#e91e8c; font-family:'DM Mono',monospace; }
+        .dt-init-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:600px; width:100%; }
+        .dt-init-card { background:#17171f; border:1px solid #2a2a38; border-radius:12px; padding:14px 16px; cursor:pointer; text-align:left; color:#9090b0; font-size:13px; line-height:1.5; transition:all 0.2s; }
+        .dt-init-card:hover { border-color:#e91e8c55; background:#1f1f2e; color:#e0e0f0; transform:translateY(-2px); box-shadow:0 4px 20px #0007; }
+
+        /* Bubbles */
+        .dt-msg-user { display:flex; justify-content:flex-end; }
+        .dt-bubble-user { background:linear-gradient(135deg,#e91e8c,#c2185b); color:#fff; padding:12px 18px; border-radius:18px 18px 4px 18px; max-width:70%; font-size:14px; line-height:1.6; box-shadow:0 4px 16px #e91e8c30; }
+        .dt-msg-ai { display:flex; align-items:flex-start; gap:12px; }
+        .dt-ai-avatar { width:32px; height:32px; border-radius:10px; background:linear-gradient(135deg,#e91e8c,#c2185b); display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; margin-top:2px; box-shadow:0 2px 8px #e91e8c40; }
+        .dt-bubble-ai { background:#17171f; border:1px solid #2a2a38; color:#c0c0e0; padding:16px 20px; border-radius:4px 18px 18px 18px; max-width:calc(100% - 44px); font-size:14px; line-height:1.8; }
+        .dt-bubble-ai.error { border-color:#ff4d4d44; background:#1a1015; color:#ff8080; }
+        .dt-bubble-ai p { margin:0 0 10px; } .dt-bubble-ai p:last-child { margin:0; }
+        .dt-bubble-ai strong { color:#e0e0f0; }
+        .dt-bubble-ai ul, .dt-bubble-ai ol { padding-left:18px; margin:8px 0; }
+        .dt-bubble-ai li { margin-bottom:4px; }
+
+        /* Table */
+        .dt-table-wrap { overflow-x:auto; margin:12px 0; border-radius:10px; border:1px solid #2a2a38; }
+        .dt-table { border-collapse:collapse; width:100%; font-size:12.5px; }
+        .dt-table thead tr { background:#1f1f2e; }
+        .dt-table th { padding:10px 14px; text-align:left; color:#9090b0; font-weight:600; border-bottom:1px solid #2a2a38; white-space:nowrap; text-transform:uppercase; letter-spacing:0.4px; font-size:11px; }
+        .dt-table td { padding:9px 14px; border-bottom:1px solid #1e1e2a; color:#c0c0e0; }
+        .dt-table tbody tr:last-child td { border-bottom:none; }
+        .dt-table tbody tr:hover td { background:#1f1f2e; }
+
+        /* Suggestions after response */
+        .dt-suggestions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+        .dt-sugg-chip { background:#1a1a28; border:1px solid #2a2a38; color:#8080b0; padding:7px 14px; border-radius:20px; font-size:12px; cursor:pointer; transition:all 0.2s; }
+        .dt-sugg-chip:hover { border-color:#e91e8c55; color:#e0e0f0; background:#1f1f2e; }
+
+        /* Typing indicator */
+        .dt-typing { display:flex; align-items:flex-start; gap:12px; }
+        .dt-typing-dots { display:flex; gap:5px; align-items:center; padding:14px 18px; background:#17171f; border:1px solid #2a2a38; border-radius:4px 18px 18px 18px; }
+        .dt-typing-dots span { width:7px; height:7px; border-radius:50%; background:#e91e8c; opacity:0.4; animation:dtPulse 1.2s infinite; }
+        .dt-typing-dots span:nth-child(2) { animation-delay:0.2s; }
+        .dt-typing-dots span:nth-child(3) { animation-delay:0.4s; }
+        @keyframes dtPulse { 0%,100%{opacity:0.2;transform:scale(0.85)} 50%{opacity:1;transform:scale(1.1)} }
+
+        /* Timestamp */
+        .dt-ts { font-size:10px; color:#404060; margin-top:5px; text-align:right; }
+
+        /* Input bar */
+        .dt-input-bar { padding:16px 24px 20px; background:#13131b; border-top:1px solid #1e1e2a; flex-shrink:0; }
+        .dt-input-inner { display:flex; align-items:center; gap:10px; background:#17171f; border:1.5px solid #2a2a38; border-radius:14px; padding:4px 4px 4px 16px; transition:border-color 0.2s; }
+        .dt-input-inner:focus-within { border-color:#e91e8c55; box-shadow:0 0 0 3px #e91e8c10; }
+        .dt-input-field { flex:1; background:none; border:none; outline:none; color:#e0e0f0; font-size:14px; font-family:inherit; padding:8px 0; }
+        .dt-input-field::placeholder { color:#404060; }
+        .dt-send-btn { width:40px; height:40px; border-radius:10px; background:linear-gradient(135deg,#e91e8c,#c2185b); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; color:#fff; font-size:16px; flex-shrink:0; transition:all 0.2s; box-shadow:0 2px 10px #e91e8c40; }
+        .dt-send-btn:hover:not(:disabled) { transform:scale(1.08); box-shadow:0 4px 16px #e91e8c60; }
+        .dt-send-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+        .dt-input-hint { font-size:11px; color:#303050; margin-top:8px; text-align:center; }
+
+        @media (max-width:768px) {
+          .dt-sidebar { display:none; }
+          .dt-init-grid { grid-template-columns:1fr; }
+          .dt-messages { padding:16px; }
+        }
+      `}</style>
+
+      <div className="dt-copilot-wrap">
+
+        {/* ── Sidebar ── */}
+        <div className={`dt-sidebar${historyOpen ? '' : ' collapsed'}`}>
+          <div className="dt-sidebar-btn" onClick={startNewChat}>
+            <span className="icon">✦</span>
+            {historyOpen && <span>New Conversation</span>}
+          </div>
+          <div className="dt-sidebar-btn" onClick={() => setHistoryOpen(p => !p)}>
+            <span className="icon">🕑</span>
+            {historyOpen && <span>History</span>}
+          </div>
+
+          {historyOpen && (
+            <div className="dt-hist-list">
+              {chatHistory.length === 0 && (
+                <div style={{ padding:'16px 10px', color:'#404060', fontSize:12 }}>
+                  No previous conversations
+                </div>
+              )}
+              {chatHistory.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="dt-hist-item"
+                  style={{ background: hoveredHist === idx ? '#1f1f2e' : undefined }}
+                  onMouseEnter={() => setHoveredHist(idx)}
+                  onMouseLeave={() => setHoveredHist(null)}
+                  onClick={() => loadHistorySession(item.session_id)}
+                >
+                  <span title={item.context}>💬 {item.context}</span>
+                  <button
+                    className="dt-hist-del"
+                    onClick={e => deleteHistorySession(e, item.session_id)}
+                    title="Delete"
+                  >🗑</button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
 
-        {/* Token input */}
-        <div>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>
-            BizWiz Auth Token
-            <span style={{ marginLeft: 8, fontSize: 11, color: '#888', fontWeight: 400 }}>
-              (F12 → Network tab on platform.ravity.io → copy the <code>authtoken</code> request header)
-            </span>
-          </label>
-          <div style={{ position: 'relative' }}>
-            <input
-              type={showToken ? 'text' : 'password'}
-              placeholder="eyJzZXNpb25WYWxpZGF0ZSI6Ii..."
-              value={authToken}
-              onChange={e => setAuthToken(e.target.value)}
-              style={{
-                width: '100%', padding: '10px 44px 10px 14px',
-                border: `1.5px solid ${authToken ? RAVITY : '#ddd'}`,
-                borderRadius: 10, fontSize: 12, outline: 'none',
-                boxSizing: 'border-box', fontFamily: 'monospace',
-                background: authToken ? `${RAVITY}08` : '#fafafa',
-              }}
-            />
-            <button onClick={() => setShowToken(s => !s)}
-              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, color: '#aaa' }}>
-              {showToken ? '🙈' : '👁'}
-            </button>
+          <div className="dt-collapse-btn" onClick={() => setHistoryOpen(p => !p)}>
+            <span>{historyOpen ? '◀' : '▶'}</span>
+            {historyOpen && <span>Collapse</span>}
           </div>
-          {authToken && <div style={{ fontSize: 11, color: '#4caf50', marginTop: 4, fontWeight: 600 }}>✅ Token set ({authToken.length} chars)</div>}
-        </div>
-      </div>
-
-      {/* ── Question selector ── */}
-      <div style={{ background: '#fff', borderRadius: 14, padding: '20px 24px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', marginBottom: 20 }}>
-        <div style={secHdr}>📋 Select Analysis Topics</div>
-        <p style={{ fontSize: 12, color: '#888', marginBottom: 14, marginTop: -8 }}>
-          Each selected topic sends one question to BizWiz. The agent queries the SQL tables and returns interpreted results.
-        </p>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10, marginBottom: 18 }}>
-          {PRESET_QUESTIONS.map((p, i) => (
-            <button key={i} onClick={() => toggleSelect(i)} style={{
-              padding: '10px 14px', borderRadius: 10, fontWeight: 600, fontSize: 13,
-              cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
-              border: `2px solid ${selected.has(i) ? RAVITY : '#e0e0e0'}`,
-              background: selected.has(i) ? `${RAVITY}10` : '#fafafa',
-              color: selected.has(i) ? RAVITY : '#555',
-            }}>
-              {p.label}
-            </button>
-          ))}
         </div>
 
-        {/* Custom question */}
-        <div>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>
-            💬 Custom Question (optional)
-          </label>
-          <input
-            type="text"
-            placeholder={`e.g. "What is the average fuel efficiency for VIN ${vin || 'XXX'} in January 2024?"`}
-            value={customQ}
-            onChange={e => setCustomQ(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !loading) runAnalysis(); }}
-            style={{
-              width: '100%', padding: '10px 14px',
-              border: `1.5px solid ${customQ ? RAVITY : '#ddd'}`,
-              borderRadius: 10, fontSize: 13, outline: 'none',
-              boxSizing: 'border-box',
-              background: customQ ? `${RAVITY}08` : '#fafafa',
-            }}
-          />
-        </div>
+        {/* ── Main chat area ── */}
+        <div className="dt-chat-main">
 
-        {/* Run button */}
-        <div style={{ marginTop: 18, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <button onClick={runAnalysis} disabled={loading} style={{
-            padding: '12px 32px',
-            background: loading ? '#f0f0f0' : `linear-gradient(135deg,${RAVITY},${RAVITY}cc)`,
-            border: 'none', borderRadius: 10, color: loading ? '#aaa' : '#fff',
-            fontWeight: 700, fontSize: 15, cursor: loading ? 'not-allowed' : 'pointer',
-            boxShadow: loading ? 'none' : `0 4px 16px ${RAVITY}44`,
-            display: 'flex', alignItems: 'center', gap: 10, transition: 'all 0.2s',
-          }}
-            onMouseEnter={e => { if (!loading) e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; }}
-          >
-            {loading
-              ? <><div style={{ width: 16, height: 16, border: '2px solid #aaa', borderTopColor: '#888', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/> Analysing…</>
-              : <>🤖 Run Analysis ({selected.size + (customQ.trim() ? 1 : 0)} questions)</>
-            }
-          </button>
-          <button onClick={() => setSelected(new Set(PRESET_QUESTIONS.map((_, i) => i)))}
-            style={{ padding: '10px 16px', border: `1px solid ${RAVITY}`, borderRadius: 10, background: 'transparent', color: RAVITY, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-            Select All
-          </button>
-          <button onClick={() => setSelected(new Set())}
-            style={{ padding: '10px 16px', border: '1px solid #ddd', borderRadius: 10, background: 'transparent', color: '#888', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-            Clear All
-          </button>
-        </div>
-      </div>
+          {/* Context bar + date filter */}
+          <div className="dt-context-bar">
+            <div className="dt-ctx-pill">
+              <span className="label">VIN</span>
+              <span className={`value${vin ? '' : ' dim'}`}>{vin || 'not selected'}</span>
+            </div>
+            <div className="dt-ctx-pill">
+              <span className="label">From</span>
+              <span className="value">{apiParams.startdate}</span>
+            </div>
+            <div className="dt-ctx-pill">
+              <span className="label">To</span>
+              <span className="value">{apiParams.enddate}</span>
+            </div>
+            <div className="dt-datefilter-wrap">
+              <DateFilterBar title="" onApply={() => setTrigger(p => p + 1)} />
+            </div>
+          </div>
 
-      {/* Error */}
-      {error && (
-        <div style={{ background: '#ffebee', border: '2px solid #ef9a9a', borderRadius: 12, padding: '14px 20px', marginBottom: 20, display: 'flex', gap: 12 }}>
-          <span style={{ fontSize: 24 }}>❌</span>
-          <div>
-            <div style={{ fontWeight: 700, color: '#c62828', fontSize: 14 }}>Error</div>
-            <div style={{ fontSize: 13, color: '#555', marginTop: 4, whiteSpace: 'pre-wrap' }}>{error}</div>
-            {(error.includes('401') || error.includes('403') || error.includes('authtoken')) && (
-              <div style={{ marginTop: 8, fontSize: 12, color: '#e65100', background: '#fff3e0', padding: '8px 12px', borderRadius: 8 }}>
-                💡 Your authtoken has likely expired. Open platform.ravity.io → F12 → Network → copy a fresh <code>authtoken</code> header.
+          {/* Messages or welcome */}
+          {showWelcome ? (
+            <div className="dt-welcome">
+              <div className="dt-welcome-logo">🤖</div>
+              <h2>Hey {firstName}, I'm your Vehicle Copilot</h2>
+              <p>
+                Ask me anything about this vehicle — fuel efficiency, fault codes, driving behaviour,
+                maintenance, warranty risk, or fleet comparisons. I query the Maruti Suzuki telematics
+                data directly.
+              </p>
+              {vin && (
+                <div className="dt-vin-badge">
+                  <span>Analysing</span>
+                  <strong>{vin}</strong>
+                  <span>·</span>
+                  <span>{apiParams.startdate} → {apiParams.enddate}</span>
+                </div>
+              )}
+              <div className="dt-init-grid">
+                {INITIAL_SUGGESTIONS.map((q, i) => (
+                  <button key={i} className="dt-init-card" onClick={() => sendMessage(q)}>
+                    {q}
+                  </button>
+                ))}
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Progress */}
-      {(loading || log.length > 0) && (
-        <div style={{ background: '#fff', borderRadius: 14, padding: '18px 22px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 10 }}>📡 Progress</div>
-          <div style={{ height: 6, background: '#f0f0f0', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
-            <div style={{ height: '100%', width: `${progress}%`, background: `linear-gradient(90deg,${RAVITY},${RAVITY}cc)`, borderRadius: 3, transition: 'width 0.4s ease' }}/>
-          </div>
-          <div style={{ background: '#0d1117', borderRadius: 8, padding: '10px 14px', fontFamily: 'monospace', fontSize: 12, maxHeight: 160, overflowY: 'auto', lineHeight: 1.9 }}>
-            {log.map((m, i) => (
-              <div key={i} style={{ color: m.startsWith('✅') ? '#3fb950' : m.startsWith('❌') ? '#f85149' : m.startsWith('⚠️') ? '#f0c040' : '#58a6ff' }}>{m}</div>
-            ))}
-            {loading && <div style={{ color: '#f0c040' }}>▊</div>}
-          </div>
-        </div>
-      )}
-
-      {/* Results */}
-      {results.length > 0 && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-            <div style={secHdr}>📊 Results — VIN: {vin} · {apiParams.startdate} → {apiParams.enddate}</div>
-            <button onClick={downloadReport} style={{ padding: '9px 20px', background: `linear-gradient(135deg,${RAVITY},${RAVITY}cc)`, border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: `0 3px 12px ${RAVITY}44`, display: 'flex', alignItems: 'center', gap: 7 }}>
-              📥 Download Report (.txt)
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-            <button onClick={() => setExpanded(Object.fromEntries(results.map((_, i) => [i, true])))}
-              style={{ padding: '5px 14px', border: '1px solid #ddd', borderRadius: 8, background: '#f9f9f9', cursor: 'pointer', fontSize: 12, color: '#555', fontWeight: 600 }}>
-              ⬇ Expand All
-            </button>
-            <button onClick={() => setExpanded({})}
-              style={{ padding: '5px 14px', border: '1px solid #ddd', borderRadius: 8, background: '#f9f9f9', cursor: 'pointer', fontSize: 12, color: '#555', fontWeight: 600 }}>
-              ⬆ Collapse All
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-            {results.map((r, i) => {
-              const st = sevStyle(r.severity);
-              const isOpen = !!expanded[i];
-              const words = r.answer.split(/\s+/);
-              const preview = words.slice(0, 25).join(' ') + (words.length > 25 ? '…' : '');
-
-              return (
-                <div key={i} style={{
-                  background: isOpen ? st.bg : '#fff',
-                  border: `1.5px solid ${isOpen ? st.border : '#e8e8e8'}`,
-                  borderRadius: 14, overflow: 'hidden',
-                  boxShadow: isOpen ? '0 4px 16px rgba(0,0,0,0.06)' : '0 1px 4px rgba(0,0,0,0.04)',
-                  transition: 'all 0.2s ease',
-                }}>
-                  <div onClick={() => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '14px 20px', cursor: 'pointer',
-                    background: isOpen ? `${st.border}28` : 'transparent',
-                    borderBottom: isOpen ? `1px solid ${st.border}44` : 'none',
-                    userSelect: 'none',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isOpen ? 0 : 3 }}>
-                          <span style={{ fontWeight: 800, fontSize: 14, color: '#111' }}>{r.label}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 20,
-                            background: st.badgeBg, color: st.badge, textTransform: 'uppercase', letterSpacing: 0.6, flexShrink: 0 }}>
-                            {r.severity}
-                          </span>
+            </div>
+          ) : (
+            <div className="dt-messages">
+              {messages.map((msg, idx) => (
+                <div key={idx}>
+                  {msg.role === 'user' ? (
+                    <div className="dt-msg-user">
+                      <div>
+                        <div className="dt-bubble-user">{msg.text}</div>
+                        <div className="dt-ts">
+                          {msg.timestamp.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
                         </div>
-                        {!isOpen && <div style={{ fontSize: 12, color: '#777', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview}</div>}
                       </div>
                     </div>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 8, flexShrink: 0, marginLeft: 12,
-                      background: isOpen ? st.border : '#f0f0f0',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 14, color: isOpen ? '#fff' : '#888', transition: 'all 0.2s',
-                    }}>
-                      {isOpen ? '▲' : '▼'}
-                    </div>
-                  </div>
-
-                  {isOpen && (
-                    <div style={{ padding: '18px 22px 20px' }}>
-                      <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10, fontFamily: 'monospace', background: '#f8f8f8', padding: '6px 10px', borderRadius: 6 }}>
-                        Q: {r.question}
-                      </div>
-                      <div style={{ fontSize: 14, color: '#222', lineHeight: 2, whiteSpace: 'pre-line' }}>
-                        {r.answer}
+                  ) : (
+                    <div className="dt-msg-ai">
+                      <div className="dt-ai-avatar">🤖</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div
+                          className={`dt-bubble-ai${msg.isError ? ' error' : ''}`}
+                          dangerouslySetInnerHTML={{
+                            __html: msg.htmlContent || `<p>${msg.text}</p>`,
+                          }}
+                        />
+                        {msg.suggestions && msg.suggestions.length > 0 && (
+                          <div className="dt-suggestions">
+                            {msg.suggestions.map((s, i) => (
+                              <button key={i} className="dt-sugg-chip" onClick={() => sendMessage(s)}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="dt-ts">
+                          {msg.timestamp.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+              ))}
 
-      {/* Empty state */}
-      {results.length === 0 && !loading && !error && (
-        <div style={{ background: '#fff', borderRadius: 14, padding: '60px 40px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', textAlign: 'center' }}>
-          <div style={{ fontSize: 60, marginBottom: 16 }}>🤖</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: '#111', marginBottom: 8 }}>AI Vehicle Analysis</div>
-          <div style={{ fontSize: 14, color: '#888', maxWidth: 500, margin: '0 auto', lineHeight: 1.7 }}>
-            Enter your <strong style={{ color: RAVITY }}>BizWiz authtoken</strong>, select the topics you want analysed,
-            then click <strong style={{ color: RAVITY }}>Run Analysis</strong>. Each topic queries the{' '}
-            <code>synthetic_data_kpi</code> and <code>qac_kpi_baseline_data</code> tables directly.
+              {loading && (
+                <div className="dt-typing">
+                  <div className="dt-ai-avatar">🤖</div>
+                  <div className="dt-typing-dots">
+                    <span/><span/><span/>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+          )}
+
+          {/* Input bar */}
+          <div className="dt-input-bar">
+            <div className="dt-input-inner">
+              <input
+                ref={inputRef}
+                className="dt-input-field"
+                placeholder={vin ? `Ask about VIN ${vin}…` : 'Ask about this vehicle…'}
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                disabled={loading}
+              />
+              <button
+                className="dt-send-btn"
+                onClick={() => sendMessage()}
+                disabled={loading || !inputText.trim()}
+                title="Send (Enter)"
+              >
+                ➤
+              </button>
+            </div>
+            <div className="dt-input-hint">
+              VIN & date range are automatically included in every question
+            </div>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </>
   );
 };
 
