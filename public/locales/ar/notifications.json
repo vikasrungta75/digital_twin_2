@@ -1,0 +1,4 @@
+{
+    "Error connection": "خطأ في إنشاء اتصال بقاعدة البيانات",
+    "token is Expired or Invalid, You will be redirect to login page": "الرمز المميز منتهي الصلاحية أو غير صالح ، ستتم إعادة توجيهك إلى صفحة تسجيل الدخول"
+}

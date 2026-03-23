@@ -1,0 +1,127 @@
+.page-wrapper-login {
+	background-color: #ffffff;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	position: relative;
+	min-height: 100vh;
+	overflow: hidden;
+
+	.card {
+		max-width: 500px;
+		margin-inline: auto;
+		max-height: 900px;
+		height: 100vh;
+		min-height: 600px;
+		position: relative;
+		z-index: 1;
+	}
+	.card-body {
+		display: flex;
+		justify-content: flex-end;
+		align-items: flex-end;
+		position: relative;
+		z-index: 1;
+	}
+
+	.reset-form {
+		margin-top: 100px !important;
+	}
+}
+
+.page-wrapper-login::before {
+	content: '';
+	background-image: url('../../../assets/full-bg.png');
+	opacity: 1;
+	background-size: cover;
+	background-repeat: no-repeat;
+	background-position: center left;
+	position: fixed;
+	top: 0px;
+	right: 42%;
+	bottom: 0px;
+	left: 0px;
+	z-index: 0;
+}
+
+@media screen and (max-width: 480px) {
+	.page-wrapper-login {
+		background-color: #f5f5f5;
+		.card {
+			margin-inline: initial;
+			margin: auto;
+			height: auto;
+		}
+		.card-body {
+			min-height: 95vh;
+		}
+	}
+	.page-wrapper-login::before {
+		background-image: none;
+	}
+}
+// _login.scss
+
+.custom-text-color {
+	color: #232323;
+}
+.custom-text-color- {
+	color: #888ea8;
+}
+
+.custom-btn-color {
+	background-color: #232323;
+	color: #ffffff;
+	border: none;
+	padding: 10px 20px;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+}
+
+.custom-btn-color:hover {
+	background-color: #4c4c4c;
+	color: #ffffff;
+}
+
+.no-shadow {
+	box-shadow: none !important;
+}
+.no-border {
+	border: none !important;
+}
+
+.text-blue- {
+	color: #4c80ff;
+	cursor: pointer;
+	&:hover {
+		color: darkblue;
+	}
+}
+.responsive-img {
+	max-width: 100%;
+	height: auto;
+}
+
+.custom-margin {
+	margin-top: 44px;
+}
+
+.small-font {
+	font-size: 0.8em;
+}
+.mr-2 {
+	margin-top: 12px;
+	margin-right: 0.5em;
+	transform: translateY(3px);
+}
+
+.custom-button {
+	border: 1px solid #000000;
+	background-color: transparent;
+	color: black;
+}
+
+.custom-button:hover {
+	background-color: #4c4c4c;
+	color: #ffffff;
+}

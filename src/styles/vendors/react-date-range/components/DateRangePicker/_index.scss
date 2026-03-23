@@ -1,0 +1,11 @@
+.rdrDateRangePickerWrapper {
+	flex-direction: row-reverse;
+	display: inline-flex;
+	user-select: none;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	@include media-breakpoint-down(map-get($aside, mobile-breakpoint)) {
+		flex-direction: column-reverse;
+	}
+}

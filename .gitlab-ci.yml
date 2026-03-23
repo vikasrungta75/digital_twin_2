@@ -1,0 +1,134 @@
+workflow:
+  name: Valcode Product for V1
+
+## Define the stages of your pipeline
+stages:
+  - sonarqube-check
+  - sonarqube-vulnerability-report
+  - build_production
+  - push_production
+  - security_scan
+  - deploy_prod
+  # - build_stgv1   
+  # - push_stgv1
+  # - build_production
+  # - push_production
+  # - security_scan
+  # - deploy_stg
+  # - deploy_prod
+
+ # - deploy
+
+variables:
+  IMAGE_TAG: "$CI_COMMIT_REF_SLUG-$CI_PIPELINE_IID"
+
+###sonar
+
+sonarqube-check:
+  stage: sonarqube-check
+  image: 
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script: 
+    - sonar-scanner
+  allow_failure: true
+  only:
+    - sub-main
+
+sonarqube-vulnerability-report:
+  stage: sonarqube-vulnerability-report
+  script:
+    - apk update && apk add curl
+    - 'curl -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL}/api/issues/gitlab_sast_export?projectKey=menaps_ravity_menaps_d8dbb49c-0d7f-427c-8dcc-8699a58b48a7&branch=${CI_COMMIT_BRANCH}&pullRequest=${CI_MERGE_REQUEST_IID}" -o gl-sast-sonar-report.json'
+  allow_failure: true
+  only:
+    - sub-main
+
+  artifacts:
+    expire_in: 5 day
+    reports:
+      sast: gl-sast-sonar-report.json
+  dependencies:
+    - sonarqube-check
+
+##Build Prod
+
+build_production:
+  stage: build_production
+  image: docker:stable
+  services:
+    - docker:stable
+  script:
+    # - docker build -t "$AZURE_REGISTRY/$AZURE_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG" -f Dockerfile.prod .
+    - docker build -t "$GCP_REGISTRY/$GCP_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG" -f Dockerfile.prod .
+  #needs: ["push_stgv1-3"]
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "sub-main"'
+    - if: '$SKIP_BUILD_STG == "true"'
+      when: never 
+
+push_production:
+    stage: push_production
+    image: google/cloud-sdk:528.0.0
+    script: 
+     #- export PATH=$PATH:/usr/bin:/usr/local/bin
+  # Verify docker is now found
+      # - echo "$AZURE_REGISTRY_PASSWORD" | docker login -u "$AZURE_REGISTRY_USERNAME" --password-stdin "$AZURE_REGISTRY"
+      # - docker push "$AZURE_REGISTRY/$AZURE_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+      # - echo "Fleet prod image push successful Image:$AZURE_REGISTRY/$AZURE_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+     - echo "$GCP_SERVICE_KEY" | base64 -d > /tmp/artifact-SA-key.json
+     - gcloud auth activate-service-account --key-file=/tmp/artifact-SA-key.json  
+     # Configure Docker to use gcloud authentication
+     - gcloud auth configure-docker 
+     - docker push "$GCP_REGISTRY/$GCP_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+     - echo "Fleet image push successful Image:$GCP_REGISTRY/$GCP_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+    rules:
+    - if: '$CI_COMMIT_REF_NAME == "sub-main"'
+    #- if: '$SKIP_BUILD_STG == "true"'
+    #  when: never 
+security_scan:
+  stage: security_scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  services:
+    - docker:stable
+  script:
+    - trivy image --quiet --format json --output scanning-report.json "$GCP_REGISTRY/$GCP_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+    # - trivy image --quiet --format json --output scanning-report.json "$AZURE_REGISTRY/$AZURE_PROJECT_NAME/$VALCODE_PRODUCTION_IMAGE_NAME_v1:$IMAGE_TAG"
+  needs: ["push_production"]
+  artifacts:
+    paths:
+      - scanning-report.json
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "sub-main"'
+
+
+# deploy_stg:
+#   stage: deploy_stg
+#   script:
+#     - apk update && apk add git
+#     - chmod +x deploy.sh 
+#     - ./deploy.sh
+#   rules:
+#     - if: '$CI_COMMIT_REF_NAME == "sub-main"'
+
+deploy_prod:
+  stage: deploy_prod
+  script:
+    - apk update && apk add git
+    - chmod +x prod_deploy.sh 
+    - ./prod_deploy.sh
+  needs: ["security_scan"]  
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "sub-main"'
+    # - when: manual
+  # allow_failure: true

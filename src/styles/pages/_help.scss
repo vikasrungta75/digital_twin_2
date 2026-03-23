@@ -1,0 +1,32 @@
+.help-menu {
+	flex-basis: 25%;
+}
+.topic-detail {
+	flex-basis: 75%;
+
+	.topic-update {
+		color: #a7a7a7;
+	}
+
+	.help-description {
+		img {
+			max-width: 100%;
+		}
+		p {
+			text-align: justify;
+		}
+	}
+
+	.help-popular-section {
+		display: flex;
+		flex-wrap: wrap;
+		.help-card {
+			flex-basis: 32%;
+			margin-right: 1rem;
+			cursor: pointer;
+		}
+		:nth-child(3) {
+			margin-right: 0px;
+		}
+	}
+}

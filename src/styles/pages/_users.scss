@@ -1,0 +1,33 @@
+.custom-accordion-permission {
+	border-radius: 15px;
+	border: 1px solid #e3e3e3;
+	background: #fff;
+	box-shadow: 0px 4px 24px 0px rgba(0, 0, 0, 0.1);
+	margin-bottom: 20px;
+	.accordion-item {
+		border-bottom: 1px solid #e9e9ea;
+		background: #fff;
+		.row-hovered:hover {
+			background-color: #FAFAFA;;
+		}
+	}
+	&:first-child {
+		border-top: 1px solid transparent;
+	}
+	&:last-child {
+		border-bottom: 1px solid #e3e3e3;
+	}
+	.accordion-button {
+		color: #1d1d1d;
+	}
+	.accordion-body {
+		padding: 0;
+		&::after {
+			display: none !important;
+		}
+	}
+}
+
+.user-row:nth-of-type(odd) {
+	background-color:#F4F4F4;
+	} 

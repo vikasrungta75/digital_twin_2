@@ -1,0 +1,26 @@
+{
+  "installCommand": "git config --global url.'https://'.insteadOf ssh:// && npm install --legacy-peer-deps",
+  "buildCommand": "DISABLE_ESLINT_PLUGIN=true npm run build",
+  "rewrites": [
+    {
+      "source": "/cxf-proxy/:path*",
+      "destination": "https://platform.ravity.io/cxf/:path*"
+    },
+    {
+      "source": "/rest-proxy/:path*",
+      "destination": "https://platform.ravity.io/services/api/:path*"
+    },
+    {
+      "source": "/ingestion-proxy/:path*",
+      "destination": "https://platform.ravity.io/:path*"
+    },
+    {
+      "source": "/iot-proxy/:path*",
+      "destination": "https://iot.ravity.io/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+//
+// Form Range
+//
+
+.form-range {
+	&::-webkit-slider-runnable-track {
+		@include dark-mode {
+			background-color: $dark-form-range-track-bg;
+		}
+	}
+
+	&::-moz-range-track {
+		@include dark-mode {
+			background-color: $dark-form-range-track-bg;
+		}
+	}
+
+	&::-webkit-slider-thumb {
+		background-color: $secondary;
+		width: 1.5rem;
+		height: 1.5rem;
+		margin-top: -0.5rem;
+	}
+}

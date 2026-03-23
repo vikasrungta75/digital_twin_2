@@ -1,0 +1,37 @@
+//
+// Input Group
+//
+
+// Textual addons
+//
+// Serves as a catch-all element for any text or radio/checkbox input you wish
+// to prepend or append to an input.
+
+.input-group-text {
+	@include dark-mode {
+		background-color: $dark-input-group-addon-bg;
+		border-color: $dark-input-group-addon-border-color;
+		color: $dark-input-group-addon-color;
+	}
+}
+
+.showPassword {
+	position: absolute;
+	right: 30px;
+	margin-top: -30px;
+}
+
+.dotted {
+	background-color: #fff !important;
+	border: 1px dashed #DBDBDB !important;
+}
+
+.custom-placeholder {
+	font-family:Open Sans;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 16.37px;
+	text-align: left;
+	color: #888EA8;
+
+}

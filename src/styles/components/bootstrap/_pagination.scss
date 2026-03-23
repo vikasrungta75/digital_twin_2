@@ -1,0 +1,85 @@
+//
+//	Pagination
+//
+
+.page-link {
+    @include dark-mode {
+        background-color: $dark-pagination-bg;
+        border-color: $dark-pagination-border-color;
+        color: $dark-pagination-color;
+
+        &:hover {
+            background-color: $dark-pagination-hover-bg;
+        }
+    }
+}
+
+.page-item {
+    &.active .page-link {
+        @include dark-mode {
+            @include gradient-bg($pagination-active-bg);
+        }
+    }
+
+    &.disabled .page-link {
+        @include dark-mode {
+            background-color: $dark-pagination-disabled-bg;
+            border-color: $dark-pagination-disabled-border-color;
+            color: $dark-pagination-disabled-color;
+        }
+    }
+}
+
+//
+.page-item:not(:first-child) .page-link {
+    height: 38px;
+    width: 38px;
+}
+.page-item:first-child .page-link {
+    height:38px;
+}
+// .pagination {
+//     --bs-pagination-padding-x: 0.75rem;
+//     --bs-pagination-padding-y: 0.385rem;
+//     --bs-pagination-font-size: 14px;
+//     /* --bs-pagination-color: #19191a; */
+//     --bs-pagination-bg: #F3F3F3;
+//     --bs-pagination-border-width: 1px;
+//     --bs-pagination-border-color: #F3F3F3;
+//     --bs-pagination-border-radius: 40px;
+//     --bs-pagination-hover-color: var(--bs-link-hover-color);
+//     --bs-pagination-hover-bg: #e9ecef;
+//     --bs-pagination-hover-border-color: #dee2e6;
+//     --bs-pagination-focus-color: var(--bs-link-hover-color);
+//     --bs-pagination-focus-bg: #e9ecef;
+//     --bs-pagination-focus-box-shadow: 0 0 0 0.25rem rgba(108, 93, 211, 0.25);
+//     --bs-pagination-active-color: #fff;
+//     /* --bs-pagination-active-bg: #6c5dd3; */
+//     --bs-pagination-active-border-color: #6c5dd3;
+//     --bs-pagination-disabled-bg: #F3F3F3;
+//     --bs-pagination-disabled-border-color: #F3F3F3;
+//     --bs-pagination-disabled-color: #1E1F20;
+//     display: -ms-flexbox;
+//     display: flex;
+//     padding-left: 0;
+//     list-style: none;
+//     width: 240px;
+//     height: 48px;
+//     top: 887px;
+//     left: 749px;
+//     font-family: Nunito;
+//     font-size: 14px;
+//     font-weight: 600;
+//     text-align: left;
+//     text-underline-position: from-font;
+//     text-decoration-skip-ink: none;
+// }
+
+// .page-item:first-child .page-link {
+//     border-top-left-radius: var(--bs-pagination-border-radius);
+//     border-bottom-left-radius: var(--bs-pagination-border-radius);
+//     // height: 48px;
+// }
+// .card-footer-right > *:not(:last-child) {
+//     margin-right: 5rem;
+// }

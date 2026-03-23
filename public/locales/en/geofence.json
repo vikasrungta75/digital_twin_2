@@ -1,0 +1,18 @@
+{
+    "Geofences": "Geofences",
+    "New geofence": "New Geofence",
+    "Geofence name": "Geofence name",
+    "Vehicle": "Vehicle",
+    "Group": "Group",
+    "Type": "Type",
+    "Delete": "Delete",
+    "View Map": "View Map",
+    "No geofence to display": "No geofence to display, please create one.",
+    "Enter a location name": "Enter a location name",
+    "Geofence type": "Geofence type",
+    "define a zone": "Define a zone",
+    "In": "In",
+    "Out": "Out",
+    "Both": "In/Out",
+    "Submit": "Submit"
+}

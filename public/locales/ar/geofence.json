@@ -1,0 +1,21 @@
+{
+    "Geofences": "الأسوار الجغرافية",
+    "New geofence": "سياج جغرافي جديد",
+    "Create Geofence": "إنشاء سياج جغرافي",
+    "Geofence name": "اسم السياج الجغرافي",
+    "Vehicle": "عربة",
+    "Group": "مجموعة",
+    "Type": "نوع",
+    "Delete": "حذف",
+    "View Map": "إعرض الخريطة",
+    "No geofence to display": "لا يوجد سياج جغرافي لعرضه",
+    "Enter a location name": "أدخل اسم الموقع",
+    "Geofence type": "نوع السياج الجغرافي",
+    "define a zone": "تحديد منطقة",
+    "In": "داخل",
+    "Out": "خارج",
+    "Both": "بالداخل /بالخارج",
+    "Submit": "سجل",
+    "Cancel" :"إلغاء",
+    "Notification trigger": "مشغل الإشعار"
+}

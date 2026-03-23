@@ -1,0 +1,14 @@
+{
+    "Super Admin Panel": "لوحة الإدارة الفائقة",
+    "Create Super Admin Panel": "إنشاء لوحة الإدارة الفائقة",
+    "Read Super Admin Panel": "قراءة لوحة الإدارة الفائقة",
+    "Edit Super Admin Panel": "تحرير لوحة الإدارة الفائقة",
+    "Search unit by name or ID": "البحث عن وحدة بالاسم أو الرقم التعريفي",
+    "New unit": "وحدة جديدة",
+    "VIN must contain 17 characters": "يجب أن يحتوي VIN على 17 حرفًا",
+    "Reg no must contain between 5 and 13 characters": "يجب أن يحتوي رقم التسجيل بين 5 و 13 حرفًا",
+    "Device IMEI must contain only numeric characters": "يجب أن يحتوي IMEI الخاص بالجهاز على أحرف رقمية فقط",
+    "Sim number must contain only numeric characters": "يجب أن يحتوي رقم البطاقة SIM على أحرف رقمية فقط",
+    "An error occurred creating device": "حدث خطأ أثناء إنشاء الجهاز",
+    "An error occurred updating device": "حدث خطأ أثناء تحديث الجهاز"
+}

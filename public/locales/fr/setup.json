@@ -1,0 +1,16 @@
+{
+    "Settings": "Configurations",
+    "Languages": "Langues",
+    "Maps": "Cartes",
+    "Logout": "Déconnexion",
+    "Profile": "Profil",
+    "Welcome": "Bienvenue",
+    "Timezones": "Fuseaux Horaires",
+    "Settings have been successfully updated": "Les paramètres ont été correctement mis à jour.",
+    "Select a map": "Sélectionnez une carte",
+    "Select a language": "Sélectionnez une langue",
+    "Select a timezone": "Sélectionnez un fuseau horaire",
+    "Activity Log": "Journal d'activité",
+    "Super Admin Panel": "Panneau Super Admin.",
+    "Setup Admin": "Configuration / Admin"
+}

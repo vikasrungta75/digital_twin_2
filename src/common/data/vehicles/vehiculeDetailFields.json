@@ -1,0 +1,124 @@
+{
+    "vehicleSpecification": [
+        {
+            "label": "VIN",
+            "value": "vin"
+        },
+        {
+            "label": "Registration number",
+            "value": "reg_no"
+        },
+        {
+            "label": "Make",
+            "value": "make"
+        },
+        {
+            "label": "Manufacturer",
+            "value": "manufacturer"
+        },
+        {
+            "label": "Series",
+            "value": "series"
+        },
+        {
+            "label": "Body type",
+            "value": "body_type"
+        },
+        {
+            "label": "Color",
+            "value": "color"
+        },
+        {
+            "label": "Engine type",
+            "value": "engine_type"
+        },
+        {
+            "label": "Engine Capacity",
+            "value": "engine_capacity",
+            "unitOfMeasure": "cc"
+        },
+        {
+            "label": "Transmission Type",
+            "value": "transmission_type"
+        },
+        {
+            "label": "Drive type",
+            "value": "drive_type"
+        },
+        {
+            "label": "Fuel type",
+            "value": "fuel_type"
+        },
+        {
+            "label": "Published mileage",
+            "value": "miliage",
+            "unitOfMeasure": "kmpl"
+        },
+        {
+            "label": "Tank capacity",
+            "value": "tank_capacity",
+            "unitOfMeasure": "litres"
+        },
+        {
+            "label": "Emission norms",
+            "value": "emission_norm"
+        },
+        {
+            "label": "Seating capacity",
+            "value": "seating_capacity",
+            "unitOfMeasure": "seaters"
+        },
+        {
+            "label": "Numbers of door",
+            "value": "no_doors",
+            "unitOfMeasure": "doors"
+        }
+    ],
+    "deviceSpecification": [
+        {
+            "label": "Serial number",
+            "value": "serial"
+        },
+        {
+            "label": "IMEI",
+            "value": "imei"
+        },
+        {
+            "label": "Current firmware",
+            "value": "current_firmware"
+        },
+        {
+            "label": "Current configuration",
+            "value": "current_configuration"
+        }
+    ],
+    "mnoSpecification": [
+        {
+            "label": "Mobile number",
+            "value": "mobile_no"
+        },
+        {
+            "label": "SIM number",
+            "value": "sim_no"
+        },
+        {
+            "label": "IMSI",
+            "value": "imsi"
+        },
+        {
+            "label": "Carrier",
+            "value": "carrier"
+        },
+        {
+            "label": "Network type",
+            "value": "type"
+        },
+        {
+            "label": "Status",
+            "value": "status"
+        }
+    ]
+}
+
+
+

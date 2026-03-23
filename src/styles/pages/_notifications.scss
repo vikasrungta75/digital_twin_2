@@ -1,0 +1,18 @@
+.notification-badge {
+	width: 12px !important;
+	height: 12px !important;
+}
+
+.notification-card {
+	margin-top: 1rem;
+	.notification-badge {
+		padding: 5px;
+	}
+	.mark-as-read-btn {
+		min-height: 20px;
+	}
+}
+
+.notify-select > div {
+	width: 350px;
+}

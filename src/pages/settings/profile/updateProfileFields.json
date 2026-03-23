@@ -1,0 +1,58 @@
+{
+    "updateProfileFields": [
+        {
+            "label": "Username",
+            "name": "userName"
+        },
+        {
+            "label": "Full name",
+            "name": "fullName"
+        },
+        {
+            "label": "Description",
+            "name": "description"
+        },
+        {
+            "label": "Phone number",
+            "name": "mobileNumber"
+        },
+        {
+            "label": "Work phone number",
+            "name": "landNumber"
+        },
+        {
+            "label": "Address",
+            "name": "address"
+        },
+        {
+            "label": "City",
+            "name": "city"
+        },
+        {
+            "label": "Zip / Postal Code",
+            "name": "pincode"
+        },
+        {
+            "label": "State / Province / Region",
+            "name": "state"
+        },
+        {
+            "label": "Country",
+            "name": "country"
+        }
+    ],
+    "updatePasswordFields": [
+        {
+            "label": "Current password",
+            "name": "oldPassword"
+        },
+        {
+            "label": "New password",
+            "name": "newPassword"
+        },
+        {
+            "label": "Confirm password",
+            "name": "confirmedPassword"
+        }
+    ]
+}

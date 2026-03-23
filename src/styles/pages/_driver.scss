@@ -1,0 +1,121 @@
+.container-health-issues {
+    display: block;
+    width: 25%;
+    padding: 11px 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: #323232;
+    // background-color: #f8f9fa;
+    background-clip: padding-box;
+    border: 1px solid #f8f9fa;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    border-radius: 1rem;
+    -webkit-box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.075);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.075);
+    -webkit-transition: border-color 0.15s ease-in-out, -webkit-box-shadow 0.15s ease-in-out;
+    transition: border-color 0.15s ease-in-out, -webkit-box-shadow 0.15s ease-in-out;
+    -o-transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out, -webkit-box-shadow 0.15s ease-in-out;
+}
+
+.content-heading {
+    // width: 252px;
+    height: 27px;
+    top: 94px;
+    left: 272px;
+    font-family: Open Sans;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 26.63px;
+    text-align: left;
+    color: #F00D69;
+}
+
+.content-heading1 {
+    // width: 252px;
+    height: 27px;
+    top: 94px;
+    left: 272px;
+    font-family: Open Sans;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 26.63px;
+    text-align: left;
+}
+
+.drIverProfile-heading {
+    font-family: Open Sans;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 27.28px;
+    text-align: left;
+    text-underline-position: from-font;
+    text-decoration-skip-ink: none;
+    color: #0E1726;
+}
+
+.viewProfile {
+    height: 19px;
+    font-family: Open sans;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 19.1px;
+    text-align: left;
+    text-underline-position: from-font;
+    text-decoration-skip-ink: none;
+    color: #4C80FF;
+}
+
+.viewProfile1 {
+    height: 19px;
+    font-family: Open sans;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 19.1px;
+    text-align: left;
+    text-underline-position: from-font;
+    -webkit-text-decoration-skip-ink: none;
+    text-decoration-skip-ink: none;
+    color: #4C80FF;
+    text-decoration: none !important;
+    margin-left: 54px;
+    position: absolute;
+    vertical-align: middle;
+    margin-top: -7px;
+}
+
+.vr {
+    display: inline-block;
+    -ms-flex-item-align: stretch;
+    align-self: stretch;
+    width: 1px;
+    /* min-height: 1em; */
+    background-color: currentcolor;
+    opacity: 0.25;
+    height: 143px;
+}
+
+.scoresHeading {
+    font-family: Open Sans;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 27.28px;
+    text-align: left;
+    text-underline-position: from-font;
+    text-decoration-skip-ink: none;
+}
+
+.emergency-heading {
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 100%;
+    letter-spacing: 0px;
+    color: #0E1726;
+}
+.text-blue {
+    color: #F00D69; 
+  }

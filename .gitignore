@@ -1,0 +1,7 @@
+node_modules/ 
+build/ 
+.env 
+".env.production" 
+"ravity_digital_twin_src/" 
+"src.zip" 
+"matches.txt" 

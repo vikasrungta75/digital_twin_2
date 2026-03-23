@@ -1,0 +1,14 @@
+{
+    "Super Admin Panel": "सुपर एडमिन पैनल",
+    "Create Super Admin Panel": "सुपर एडमिन पैनल बनाएं",
+    "Read Super Admin Panel": "सुपर एडमिन पैनल पढ़ें",
+    "Edit Super Admin Panel": "सुपर एडमिन पैनल संपादित करें",
+    "Search unit by name or ID": "नाम या आईडी से इकाई खोजें",
+    "New unit": "नई इकाई",
+    "VIN must contain 17 characters": "VIN में 17 अक्षर होने चाहिए",
+    "Reg no must contain between 5 and 13 characters": "रजिस्ट्रेशन नंबर 5 से 13 अक्षरों के बीच होना चाहिए",
+    "Device IMEI must contain only numeric characters": "डिवाइस IMEI में केवल संख्यात्मक अक्षर होने चाहिए",
+    "Sim number must contain only numeric characters": "सिम नंबर में केवल संख्यात्मक अक्षर होने चाहिए",
+    "An error occurred creating device": "डिवाइस बनाने में त्रुटि हुई",
+    "An error occurred updating device": "डिवाइस को अपडेट करने में त्रुटि हुई"
+}

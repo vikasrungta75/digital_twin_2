@@ -1,0 +1,111 @@
+@use 'sass:map';
+
+.rnc__notification-container--top-center,
+.rnc__notification-container--top-left,
+.rnc__notification-container--top-right,
+.rnc__notification-container--bottom-center,
+.rnc__notification-container--bottom-left,
+.rnc__notification-container--bottom-right,
+.rnc__notification-container--center,
+.rnc__notification-container--top-full,
+.rnc__notification-container--bottom-full {
+	position: absolute;
+	min-width: $notification-min-width;
+	pointer-events: all;
+}
+
+.rnc__notification-container--center,
+.rnc__notification-container--top-center,
+.rnc__notification-container--bottom-center {
+	left: calc(50% - (#{$notification-max-width} / 2));
+	display: flex;
+	max-width: $notification-max-width;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+
+.rnc__notification-container--center {
+	top: $notification-gutter;
+	height: 100%;
+	pointer-events: none;
+}
+
+.rnc__notification-container--top-full,
+.rnc__notification-container--bottom-full {
+	width: 100%;
+	min-width: 100%;
+}
+
+.rnc__notification-container--bottom-full {
+	bottom: 0;
+}
+
+.rnc__util--flex-center {
+	display: flex;
+	min-width: $notification-min-width;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	pointer-events: all;
+}
+
+.rnc__notification-container--top-center {
+	top: $notification-gutter;
+}
+
+.rnc__notification-container--bottom-center {
+	bottom: $notification-gutter;
+}
+
+.rnc__notification-container--top-left {
+	top: $notification-gutter;
+	left: $notification-gutter;
+}
+
+.rnc__notification-container--top-right {
+	top: 6.5rem;
+	right: $notification-gutter;
+	@include media-breakpoint-down(map.get($aside, mobile-breakpoint)) {
+		top: 5.5rem;
+	}
+}
+
+.rnc__notification-container--bottom-left {
+	bottom: $notification-gutter;
+	left: $notification-gutter;
+}
+
+.rnc__notification-container--bottom-right {
+	right: $notification-gutter;
+	bottom: $notification-gutter;
+}
+
+.rnc__notification-container--mobile-top,
+.rnc__notification-container--mobile-bottom {
+	position: absolute;
+	pointer-events: all;
+}
+
+.rnc__notification-container--mobile-top {
+	top: $notification-gutter;
+	right: $notification-gutter;
+	left: $notification-gutter;
+}
+
+.rnc__notification-container--mobile-bottom {
+	right: $notification-gutter;
+	bottom: $notification-gutter;
+	left: $notification-gutter;
+	margin-bottom: $notification-gutter * 0.75;
+}
+
+.container-fluid{
+    --bs-gutter-x: 1.5rem;
+    --bs-gutter-y: 0;
+    width: 100%;
+    padding-right: calc(var(--bs-gutter-x)* 0.5); 
+    padding-left: calc(var(--bs-gutter-x)* 0);
+    margin-right: auto;
+    margin-left: auto;
+}

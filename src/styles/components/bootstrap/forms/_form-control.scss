@@ -1,0 +1,291 @@
+.form-control {
+	border: 1px solid #e0e6ed;
+	border-color: #e0e6ed;
+	border-radius: 6px;
+	// background: #ffffff !important;	
+	@include dark-mode {
+		color: $dark-input-color;
+
+		&:not([class*='valid']) {
+			border: 1px solid #e0e6ed;
+			border-color: #e0e6ed;
+		}
+	}
+
+	line-height: 2.2;
+
+	&:focus {
+		background-color: #ffffff !important;
+	}
+
+	&:hover {
+		cursor: pointer;
+		box-shadow: inset 0 1px 2px #e0e6ed, 0 0 0 0.25rem #e0e6ed;
+		border-color: #e0e6ed;
+	}
+
+	&:disabled,
+	&[readonly] {
+		@include dark-mode {
+			background-color: $dark-input-disabled-bg;
+		}
+
+		cursor: initial;
+		box-shadow: none;
+		border-color: transparent;
+		color: #e0e6ed;
+	}
+}
+
+.form-control.is-valid {
+	border-color: #e0e6ed !important;
+}
+
+.form-control.is-valid:focus {
+	border-color: #e0e6ed !important;
+	box-shadow: 0 0 0 0.25rem rgba(228, 31, 63, 0.25);
+}
+
+.is-invalid {
+	border-color: #e41f3f !important;
+	padding-right: calc(1.25em + 0.75rem);
+	background-image: none;
+}
+.is-invalid:hover {
+	cursor: pointer;
+	box-shadow: 0 0 0 0.25rem rgba(228, 31, 63, 0.25);
+	border-color: #e41f3f;
+}
+
+.is-invalid:focus {
+	border-color: #e0e6ed !important;
+	box-shadow: 0 0 0 0.25rem rgba(228, 31, 63, 0.25);
+}
+
+.form-control-plaintext {
+	@include dark-mode {
+		color: $dark-input-plaintext-color;
+	}
+
+	&:focus {
+		outline: none;
+	}
+}
+
+.form-control[type='file']::-webkit-file-upload-button {
+	@include dark-mode {
+		background-color: $dark-input-file-upload-button-bg;
+	}
+
+	// background-color: $input-file-upload-button-bg;
+}
+
+@include dark-mode(true) {
+	input:-webkit-autofill,
+	input:-webkit-autofill:hover,
+	input:-webkit-autofill:focus,
+	textarea:-webkit-autofill,
+	textarea:-webkit-autofill:hover,
+	textarea:-webkit-autofill:focus,
+	select:-webkit-autofill,
+	select:-webkit-autofill:hover,
+	select:-webkit-autofill:focus {
+		box-shadow: 0 0 0 100rem $dark-input-autofill-bg inset;
+		-webkit-text-fill-color: $dark-input-autofill-color;
+	}
+}
+
+.date-picker {
+	width: 275px;
+	height: 41px;
+	border-radius: 4px;
+	border: 0.5px;
+	border: 0.5px solid #dbdbdb;
+	background-color: #fff;
+	justify-content: space-between;
+}
+
+.input-text-field {
+	line-height: 2.2;
+	width: 383px;
+	height: 44px;
+	border: 1px;
+	background-color: #ffffff;
+	border: 1px solid #e0e6ed;
+	border-radius: 6px;
+}
+
+.emailTextBox {
+	margin-top: 10px;
+}
+/* Apply background color to AutoComplete input directly */
+.emailTextBox .autocomplete-input {
+    background-color: #FFFFFF !important; /* Ensure white background */
+}
+
+
+.create-heading {
+	font-family: Open Sans;
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 21.82px;
+	text-align: left;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+	color: #1f1e1e;
+}
+
+.create-para {
+	top: 384px;
+	left: 19px;
+	font-family: Open Sans;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 16.37px;
+	text-align: left;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+	color: #888ea8;
+}
+
+.task-heading {
+	width: 350px;
+	padding: 0px;
+	border: 1px;
+	font-family: Open Sans;
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 27.28px;
+	text-align: left;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+	color:#F00D69;
+	margin-top: 45px;
+	position: relative;
+}
+
+.createTask-line {
+	width: 411px;
+	height: 0px;
+	margin-left: -14px;
+	border: 1px solid #dbdbdb;
+	margin: -7px 0px 8px -14px;
+}
+
+.deleteTask-line {
+	width: 400px;
+	height: 0px;
+	border: 1px solid #dbdbdb;
+	margin: 0px 0px 0px 0px;
+	position: relative;
+}
+
+.save-text {
+	width: Fixed (97px) px;
+	height: Fixed (40px) px;
+	padding: 11px 9px 11px 9px;
+	gap: 10px;
+	border-radius: 4px;
+	background: #1f1e1e;
+	font-family:Open Sans;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 19.1px;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+}
+
+.cancel-text {
+	width: Fixed (97px) px;
+	height: Fixed (40px) px;
+	padding: 11px 9px 11px 9px;
+	gap: 10px;
+	border-radius: 4px;
+	border: 0.5px 0px 0px 0px;
+	background: #ffffff;
+	border: 0.5px solid #e0e6ed;
+	font-family:Open Sans;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 19.1px;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+}
+
+.kilometers-text {
+	margin-left: 16px;
+}
+
+.engine-text {
+	margin-left: 254px;
+	position: absolute;
+}
+
+.cancel-text.light-btn:hover {
+	background-color: #4c4c4c !important;
+	border-color: #e0e6ed !important;
+}
+
+.intervals-headings {
+	width: 118px;
+	height: 19px;
+	font-family:Open Sans;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 19.1px;
+	text-align: left;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+	color: #0e1726;
+}
+
+.target-input {
+	width: 192px;
+	height: 38px;
+	padding: 12px 6.69px 12.18px 6px;
+	gap: 10px;
+	border-radius: 6px;
+	border: 1px;
+	background: #ffffff;
+	border: 1px solid #e0e6ed;
+}
+
+.notifications-margin {
+	margin-right: 25px;
+}
+
+.createTask-card {
+	--bs-card-border-color: rgba(222, 226, 230, 0.5);
+	margin-bottom: calc(1.275rem + 0.3vw);
+	border: var(--bs-card-border-width) solid var(--bs-card-border-color);
+	background-color: #fff;
+	background-color: var(--bs-card-bg);
+	-webkit-box-shadow: 0 0rem 3rem rgba(0, 0, 0, 0.085);
+	box-shadow: 0 0rem 3rem rgba(0, 0, 0, 0.085);
+	border: 1px solid #e3e3e3;
+	margin-top: -12px;
+	margin-left: -12px;
+	height: 975px;
+	width: 412px;
+	border-radius: 30px 0px 0px 30px;
+}
+
+.valid-feedback-green {
+	color: #e41f3f;
+}
+
+.deletetask-heading {
+	width: 350px;
+	padding: 0px;
+	border: 1px;
+	font-family:Open Sans;
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 27.28px;
+	text-align: left;
+	text-underline-position: from-font;
+	text-decoration-skip-ink: none;
+	color: #e41f3f;
+	margin: 64px 0px 0px 12px;
+	position: relative;
+}

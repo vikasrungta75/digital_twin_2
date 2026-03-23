@@ -1,0 +1,87 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Ravity Design Tokens — Single Source of Truth
+// All pages MUST use these variables. No hardcoded hex values in components.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Brand Palette ────────────────────────────────────────────────────────────
+$rv-purple:          #6c5dd3;
+$rv-purple-light:    #f0eeff;
+$rv-purple-border:   #d4ccff;
+$rv-pink:            #f00d69;
+$rv-pink-dark:       #c5005a;   // WCAG AA on white (contrast ≥ 4.5:1)
+$rv-pink-light:      #fff0f7;
+
+// ── Reports / Red-Black Theme ────────────────────────────────────────────────
+$rv-red:             #e53935;
+$rv-red-dark:        #b71c1c;
+$rv-red-light:       #ffebee;
+$rv-red-accent:      #ff5252;
+$rv-black:           #111111;
+$rv-black-soft:      #1e1e1e;
+$rv-charcoal:        #2d2d2d;
+$rv-charcoal-mid:    #3d3d3d;
+
+// ── Neutral Surfaces (Light App Theme) ───────────────────────────────────────
+$rv-bg:              #f4f5f9;
+$rv-surface:         #ffffff;
+$rv-surface-alt:     #fafaff;
+$rv-border:          #e8e8f0;
+$rv-border-med:      #d0d0e0;
+
+// ── Text ─────────────────────────────────────────────────────────────────────
+$rv-text-primary:    #1a1a2e;
+$rv-text-secondary:  #4a4a6a;
+$rv-text-muted:      #9090b0;
+$rv-text-on-dark:    #ffffff;
+$rv-text-on-dark-sub: rgba(255, 255, 255, 0.65);
+
+// ── Severity / Status ────────────────────────────────────────────────────────
+$rv-critical-bg:     #fff0f0;
+$rv-critical-color:  #d32f2f;
+$rv-high-bg:         #fff4ec;
+$rv-high-color:      #e65100;
+$rv-warning-bg:      #fffbec;
+$rv-warning-color:   #b45309;
+$rv-info-bg:         #f0eeff;
+$rv-info-color:      #6c5dd3;
+$rv-success-bg:      #f0fdf4;
+$rv-success-color:   #166534;
+
+// ── Shadows ───────────────────────────────────────────────────────────────────
+$rv-shadow-sm:       0 1px 4px rgba(0, 0, 0, 0.08);
+$rv-shadow-md:       0 0 25px rgba(94, 92, 154, 0.1);
+$rv-shadow-lg:       0 4px 24px rgba(0, 0, 0, 0.14);
+$rv-shadow-red:      0 4px 20px rgba(229, 57, 53, 0.25);
+
+// ── CSS Custom Properties (consumed by TSX via var()) ────────────────────────
+:root {
+  --rv-purple:          #{$rv-purple};
+  --rv-purple-light:    #{$rv-purple-light};
+  --rv-pink:            #{$rv-pink};
+  --rv-pink-dark:       #{$rv-pink-dark};
+  --rv-red:             #{$rv-red};
+  --rv-red-dark:        #{$rv-red-dark};
+  --rv-red-light:       #{$rv-red-light};
+  --rv-red-accent:      #{$rv-red-accent};
+  --rv-black:           #{$rv-black};
+  --rv-black-soft:      #{$rv-black-soft};
+  --rv-charcoal:        #{$rv-charcoal};
+  --rv-bg:              #{$rv-bg};
+  --rv-surface:         #{$rv-surface};
+  --rv-surface-alt:     #{$rv-surface-alt};
+  --rv-border:          #{$rv-border};
+  --rv-border-med:      #{$rv-border-med};
+  --rv-text-primary:    #{$rv-text-primary};
+  --rv-text-secondary:  #{$rv-text-secondary};
+  --rv-text-muted:      #{$rv-text-muted};
+  --rv-text-on-dark:    #{$rv-text-on-dark};
+  --rv-shadow-sm:       #{$rv-shadow-sm};
+  --rv-shadow-md:       #{$rv-shadow-md};
+  --rv-shadow-lg:       #{$rv-shadow-lg};
+  --rv-shadow-red:      #{$rv-shadow-red};
+  --rv-critical-color:  #{$rv-critical-color};
+  --rv-high-color:      #{$rv-high-color};
+  --rv-warning-color:   #{$rv-warning-color};
+  --rv-info-color:      #{$rv-info-color};
+  --rv-success-color:   #{$rv-success-color};
+}

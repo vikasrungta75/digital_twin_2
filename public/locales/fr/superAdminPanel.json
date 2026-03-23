@@ -1,0 +1,14 @@
+{
+    "Super Admin Panel": "Panneau Super Administrateur",
+    "Create Super Admin Panel": "Créer un Panneau Super Administrateur",
+    "Read Super Admin Panel": "Lire le Panneau Super Administrateur",
+    "Edit Super Admin Panel": "Modifier le Panneau Super Administrateur",
+    "Search unit by name or ID": "Rechercher une unité par nom ou ID",
+    "New unit": "Nouvelle unité",
+    "VIN must contain 17 characters": "Le numéro d'identification du véhicule doit contenir 17 caractères",
+    "Reg no must contain between 5 and 13 characters": "Le numéro d'immatriculation doit contenir entre 5 et 13 caractères",
+    "Device IMEI must contain only numeric characters": "L'IMEI doit contenir uniquement des caractères numériques",
+    "Sim number must contain only numeric characters": "Le numéro de carte SIM doit contenir uniquement des caractères numériques",
+    "An error occurred creating device": "Une erreur est survenue lors de la création du dispositif",
+    "An error occurred updating device": "Une erreur est survenue lors de la mise à jour du dispositif"
+}

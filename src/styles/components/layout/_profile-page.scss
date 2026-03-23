@@ -1,0 +1,14 @@
+@import '../../settings/index';
+
+.view-all {
+	cursor: pointer;
+	&:hover {
+		color: $secondary;
+	}
+}
+
+.rst-pwd-card {
+	.showPassword {
+		right: 50px;
+	}
+}

@@ -1,0 +1,21 @@
+{
+    "Geofences": "भू-बाड़े",
+    "New geofence": "नया जियोफेंस",
+    "Create Geofence": "जियोफेंस बनाएं",
+    "Geofence name": "नाम",
+    "Vehicle": "वाहन",
+    "Group": "समूह",
+    "Type": "प्रकार",
+    "Delete": "मिटाना",
+    "View Map": "मानचित्र",
+    "No geofence to display": "प्रदर्शित करने के लिए कोई जियोफेंस नहीं है, कृपया एक बनाएं",
+    "Enter a location name": "एक स्थान का नाम दर्ज करें",
+    "Geofence type": "जियोफेंस प्रकार",
+    "define a zone": "एक क्षेत्र को परिभाषित करें",
+    "Both": "अंदर बाहर",
+    "Out": "बाहर",
+    "In": "के भीतर",
+    "Submit": "प्रस्तुत करना",
+    "Cancel": "रद्द करना",
+    "Notification trigger": "अधिसूचना ट्रिगर"
+}
