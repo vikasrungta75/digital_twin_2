@@ -1,457 +1,334 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
+import Icon from '../../components/icon/Icon';
 
-// ─── BizWiz Config ────────────────────────────────────────────────────────────
-// FIXED (belong to the VDTSIA assistant — never change):
-//   assistId:  3514581148
-//   connector: 238893540
-//   tables:    synthetic_data_kpi, qac_kpi_baseline_data (connector 238893540)
-//
-// DYNAMIC (must match the logged-in user's authtoken — read from Redux):
-//   spaceKey:  user?.user?.spaceKey   ← server validates this == authtoken.space
-//   userID:    user?.user?.id
-//   authtoken: Redux token            ← already session-scoped
-const BIZVIZ_ENDPOINT  = '/bizviz-proxy/llmService';
-const BIZVIZ_ASSIST_ID = '3514581148';
-const BIZVIZ_CONNECTOR = '238893540';
-const BIZVIZ_TABLES = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
-const BIZVIZ_DESCRIPTION =
-  'You are the Ravity Vehicle Digital Twin SQL Intelligence Agent for Maruti Suzuki. You MUST ONLY query these two collections: (1) synthetic_data_kpi — fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, idle_time, process_date, trip_id, trip_start_time, trip_end_time, altitude_median, gsm_strength_per, odometerresetcount, fueladulteration, ac_usage_duration, ac_usage_frequency, speed_distribution_0_20_kmh, speed_distribution_20_60_kmh, speed_distribution_60_80_kmh, speed_distribution_80_100_kmh, speed_distribution_100_120_kmh, speed_distribution_120_140_kmh. (2) qac_kpi_baseline_data — fleet baseline averages with same vin field. NEVER query any other collection — only these two are accessible. Always filter using the vin field and process_date field from synthetic_data_kpi.';
-const INITIAL_SUGGESTIONS = [
-  'Show harsh acceleration, braking and overspeeding counts for this VIN',
-  'What is the fuel efficiency and total distance for this VIN?',
-  'Show speed distribution across all speed bands for this VIN',
-  'Compare harsh events and fuel efficiency against fleet baseline',
-];
+// ─── DT Copilot Config ────────────────────────────────────────────────────────
+// Modelled exactly on the working FleetCopilot pattern.
+// Only these values differ from fleet: assistId, connector, tables, description.
+// Everything else (headers, fetch pattern, response parsing) is identical to fleet.
+const BIZVIZ_URL     = '/bizviz-proxy/llmService';
+const DT_ASSIST_ID   = '3514581148';
+const DT_CONNECTOR   = '238893540';
+const DT_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+// Short description — same length/style as fleet copilot
+const DT_DESCRIPTION = 'I am the Vehicle Digital Twin Intelligence Agent for Maruti Suzuki, ' +
+  'an intelligent assistant that analyses vehicle telematics data including harsh driving events, ' +
+  'fuel efficiency, speed distribution, CO2 emissions, DTC faults, and fleet benchmarks ' +
+  'from the Ravity Digital Twin platform.';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface ChartConfig {
-  chart_type: string;
-  chart_title: string;
-  x_axis: string;
-  y_axis: string;
-  x_axis_label: string;
-  y_axis_label: string;
-  data: any[];
+interface HistoryItem {
+  context: string;
+  session_id: string;
+  last_activity?: string;
 }
 
-interface ParsedResponse {
-  tableRows: any[];
-  answer: string;
-  analysis: string;
-  explanation: string;
-  suggestions: string[];
-  chart: ChartConfig | null;
-}
+const AiAnalysisDashboard = () => {
+  const { vin, apiParams } = useDt();
+  const { token, user }    = useSelector((state: any) => state.auth);
 
-interface Message {
-  role: 'user' | 'assistant';
-  text: string;
-  parsed: ParsedResponse | null;
-  isError: boolean;
-  timestamp: Date;
-}
+  const [inputText,        setInputText]        = useState('');
+  const [responses,        setResponses]        = useState<any[]>([]);
+  const [loading,          setLoading]          = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<string>('');
+  const [questionHistory,  setQuestionHistory]  = useState<HistoryItem[]>([]);
+  const [historyOpen,      setHistoryOpen]      = useState(true);
+  const [hoveredIndex,     setHoveredIndex]     = useState<number | null>(null);
+  const [hoveredIndex1,    setHoveredIndex1]    = useState<number | null>(null);
+  const [hoveredIndex2,    setHoveredIndex2]    = useState<number | null>(null);
+  const [sessionId,        setSessionId]        = useState<string | null>(null);
+  const [,                 setTrigger]          = useState(0);
 
-// ─── SAFE default — never undefined ──────────────────────────────────────────
-const EMPTY_PARSED: ParsedResponse = {
-  tableRows: [], answer: '', analysis: '',
-  explanation: '', suggestions: [], chart: null,
-};
-
-// ─── Response parser ─────────────────────────────────────────────────────────
-// Handles both response shapes observed across agents:
-//
-// Shape A (DT agent — data present):
-//   fetch → { original_text, response: JSON_STRING }
-//   JSON_STRING → { data: JSON_STRING, summary: JSON_STRING,
-//                   explanation: string,
-//                   visualization: { Answer, Analysis, Suggestions, chart_type, x_axis, y_axis } }
-//
-// Shape B (Fleet agent — working reference):
-//   fetch → { original_text, response: JSON_STRING }
-//   JSON_STRING → { data: JSON_STRING, summary: ARRAY,
-//                   explanation: string,
-//                   visualization: { Answer, Analysis, Suggestions, chart_type, x_axis, y_axis } }
-//
-// Shape C (any agent — no data):
-//   visualization: { error: string, answer: string, suggestions: [] }  ← lowercase
-//
-// Rules:
-//   - viz fields are CamelCase (Answer/Analysis/Suggestions) when data present
-//   - viz fields are lowercase (answer/suggestions) when data empty
-//   - Always show explanation even when data is []
-//   - summary can be a JSON string OR a plain array
-const parseResponse = (raw: any): ParsedResponse => {
-  try {
-    if (!raw) return { ...EMPTY_PARSED };
-
-    // Step 1 — unwrap outer .response string
-    let inner: any = {};
-    try {
-      const r = typeof raw?.response === 'string' ? raw.response : raw;
-      inner = typeof r === 'string' ? JSON.parse(r) : (r && typeof r === 'object' ? r : {});
-    } catch {
-      const fallback = String(raw?.response || raw || '');
-      return { ...EMPTY_PARSED, answer: fallback ? `<p>${fallback}</p>` : '' };
-    }
-
-    // Step 2 — parse data rows (inner.data is a JSON string)
-    let tableRows: any[] = [];
-    try {
-      const dataRaw = inner.data ?? '[]';
-      const parsed  = typeof dataRaw === 'string' ? JSON.parse(dataRaw) : dataRaw;
-      tableRows     = Array.isArray(parsed) ? parsed : [];
-    } catch { tableRows = []; }
-
-    // Step 3 — visualization: handle BOTH CamelCase (data present) and lowercase (no data)
-    const viz = (inner.visualization && typeof inner.visualization === 'object')
-      ? inner.visualization : {};
-
-    // CamelCase takes priority (data-present shape), fallback to lowercase
-    const answer     = String(viz.Answer    || viz.answer    || '');
-    const analysis   = String(viz.Analysis  || viz.analysis  || '');
-    const explanation= String(inner.explanation || '');
-
-    // Suggestions: array or comma string, both shapes
-    let suggestions: string[] = [];
-    try {
-      const rawS = viz.Suggestions || viz.suggestions || [];
-      suggestions = Array.isArray(rawS)
-        ? rawS.filter(Boolean)
-        : String(rawS).split(',').map((s: string) => s.trim()).filter(Boolean);
-    } catch { suggestions = []; }
-
-    // Step 4 — chart config
-    // Only build chart when we have numeric data (series_columns or y_axis is numeric)
-    let chart: ChartConfig | null = null;
-    if (
-      tableRows.length > 0 &&
-      viz.chart_type &&
-      viz.x_axis &&
-      viz.y_axis &&
-      // Only render bar/line charts when y_axis has numeric values
-      tableRows.some((r: any) => typeof r[viz.y_axis] === 'number')
-    ) {
-      chart = {
-        chart_type:   String(viz.chart_type),
-        chart_title:  String(viz.chart_title  || ''),
-        x_axis:       String(viz.x_axis),
-        y_axis:       String(viz.y_axis),
-        x_axis_label: String(viz.x_axis_label || viz.x_axis),
-        y_axis_label: String(viz.y_axis_label || viz.y_axis),
-        data:         tableRows,
-      };
-    }
-
-    return { tableRows, answer, analysis, explanation, suggestions, chart };
-  } catch (e) {
-    console.error('[parseResponse] unexpected error:', e);
-    return { ...EMPTY_PARSED, answer: '<p>Could not parse response.</p>' };
-  }
-};
-
-// ─── Inline SVG bar chart ────────────────────────────────────────────────────
-const InlineBarChart: React.FC<{ cfg: ChartConfig }> = ({ cfg }) => {
-  const MAX_BARS = 20;
-  const rows     = (cfg.data || []).slice(0, MAX_BARS);
-  if (!rows.length) return null;
-
-  const values   = rows.map(r => Number(r[cfg.y_axis] ?? 0));
-  const maxVal   = Math.max(...values, 1);
-  const BAR_W    = 28;
-  const GAP      = 8;
-  const H_CHART  = 150;
-  const LABEL_H  = 36;
-  const SVG_W    = rows.length * (BAR_W + GAP);
-  const SVG_H    = H_CHART + LABEL_H;
-
-  const fmtLabel = (s: any) => {
-    const str = String(s ?? '');
-    return str.length > 8 ? '…' + str.slice(-6) : str;
-  };
-  const fmtVal = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-
-  return (
-    <div style={{ marginTop: 14 }}>
-      {cfg.chart_title && (
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#9090b0', marginBottom: 8,
-          textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          {cfg.chart_title}
-        </div>
-      )}
-      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
-        <svg
-          viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-          style={{ display: 'block', minWidth: Math.max(SVG_W, 300), height: SVG_H, width: '100%' }}
-        >
-          {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
-            const y = H_CHART - f * H_CHART;
-            return (
-              <g key={i}>
-                <line x1={0} y1={y} x2={SVG_W} y2={y}
-                  stroke="#2a2a38" strokeWidth={0.8}
-                  strokeDasharray={f === 0 ? '' : '3,3'} />
-                <text x={2} y={y - 2} fill="#404060" fontSize={8}>
-                  {fmtVal(f * maxVal)}
-                </text>
-              </g>
-            );
-          })}
-
-          {rows.map((row, i) => {
-            const val  = values[i];
-            const barH = Math.max((val / maxVal) * H_CHART, 2);
-            const x    = i * (BAR_W + GAP);
-            const y    = H_CHART - barH;
-            return (
-              <g key={i}>
-                <rect x={x} y={y} width={BAR_W} height={barH}
-                  fill={`hsl(330,${60 + (i % 3) * 8}%,55%)`} rx={3} opacity={0.88}>
-                  <title>{`${row[cfg.x_axis]}: ${val}`}</title>
-                </rect>
-                <text x={x + BAR_W / 2} y={y - 3} textAnchor="middle"
-                  fill="#c0c0e0" fontSize={7.5}>
-                  {fmtVal(val)}
-                </text>
-                <text
-                  x={x + BAR_W / 2} y={H_CHART + 13}
-                  textAnchor="middle" fill="#6060a0" fontSize={7.5}
-                  transform={`rotate(-30,${x + BAR_W / 2},${H_CHART + 13})`}
-                >
-                  {fmtLabel(row[cfg.x_axis])}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-        <span style={{ fontSize: 10, color: '#555570' }}>{cfg.x_axis_label}</span>
-        <span style={{ fontSize: 10, color: '#555570' }}>{cfg.y_axis_label}</span>
-      </div>
-      {cfg.data.length > MAX_BARS && (
-        <div style={{ fontSize: 11, color: '#404060', marginTop: 3 }}>
-          Showing first {MAX_BARS} of {cfg.data.length} — see full table below
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── Data table ───────────────────────────────────────────────────────────────
-const DataTable: React.FC<{ rows: any[] }> = ({ rows }) => {
-  const [expanded, setExpanded] = useState(false);
-  if (!rows || !rows.length) return null;
-
-  const keys    = Object.keys(rows[0] || {});
-  const fmtKey  = (k: string) =>
-    k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  const visible = expanded ? rows : rows.slice(0, 10);
-
-  return (
-    <div style={{ marginTop: 14 }}>
-      <div className="dt-table-wrap">
-        <table className="dt-table">
-          <thead>
-            <tr>{keys.map(k => <th key={k}>{fmtKey(k)}</th>)}</tr>
-          </thead>
-          <tbody>
-            {visible.map((row, i) => (
-              <tr key={i}>{keys.map(k => <td key={k}>{row[k] ?? '—'}</td>)}</tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rows.length > 10 && (
-        <button
-          onClick={() => setExpanded(p => !p)}
-          style={{ marginTop: 6, background: 'none', border: '1px solid #2a2a38',
-            borderRadius: 8, color: '#6060a0', fontSize: 11,
-            padding: '4px 12px', cursor: 'pointer', fontFamily: 'inherit' }}>
-          {expanded ? '▲ Show less' : `▼ Show all ${rows.length} rows`}
-        </button>
-      )}
-    </div>
-  );
-};
-
-// ─── Assistant bubble ─────────────────────────────────────────────────────────
-const AssistantContent: React.FC<{
-  parsed: ParsedResponse | null;
-  onSuggestion: (s: string) => void;
-}> = ({ parsed, onSuggestion }) => {
-  // Always safe — parsed is never undefined here but guard anyway
-  const p = parsed || EMPTY_PARSED;
-
-  return (
-    <div>
-      {p.chart && <InlineBarChart cfg={p.chart} />}
-
-      {p.answer && (
-        <div
-          dangerouslySetInnerHTML={{ __html: p.answer }}
-          style={{ marginTop: p.chart ? 14 : 0 }}
-        />
-      )}
-
-      {p.analysis && (
-        <div
-          dangerouslySetInnerHTML={{ __html: p.analysis }}
-          style={{ marginTop: 10, borderTop: '1px solid #2a2a38', paddingTop: 10 }}
-        />
-      )}
-
-      {/* Always show explanation — important context even when data is empty */}
-      {p.explanation && (
-        <p style={{ margin: '0 0 8px', color: '#9090b0', fontStyle: 'italic', fontSize: 13 }}>
-          {p.explanation}
-        </p>
-      )}
-
-      {p.tableRows.length > 0 && <DataTable rows={p.tableRows} />}
-
-      {p.suggestions.length > 0 && (
-        <div className="dt-suggestions">
-          {p.suggestions.map((s, i) => (
-            <button key={i} className="dt-sugg-chip" onClick={() => onSuggestion(s)}>
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Fallback — nothing parsed at all */}
-      {!p.chart && !p.answer && !p.analysis && !p.explanation && p.tableRows.length === 0 && (
-        <div style={{ color: '#808080', fontSize: 13, lineHeight: 1.7 }}>
-          <p style={{ margin: '0 0 8px', color: '#e08060', fontWeight: 600 }}>⚠️ No data returned</p>
-          <p style={{ margin: '0 0 6px' }}>This may be because:</p>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            <li>The question requires a collection not in the connector — try asking about harsh events, fuel, speed, DTC codes or vehicle info</li>
-            <li>The selected VIN has no records in the date range</li>
-            <li>Try asking about: harsh events, fuel efficiency, speed, distance, CO₂ or baseline comparisons</li>
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── Main component ───────────────────────────────────────────────────────────
-const AiAnalysisDashboard: React.FC = () => {
-  const { vin, apiParams }  = useDt();
-  const { token, user }     = useSelector((state: any) => state.auth);
-
-  const [messages,    setMessages]    = useState<Message[]>([]);
-  const [inputText,   setInputText]   = useState('');
-  const [loading,     setLoading]     = useState(false);
-  const [sessionId,   setSessionId]   = useState('');
-  const [historyOpen, setHistoryOpen] = useState(true);
-  const [chatHistory, setChatHistory] = useState<{ context: string; session_id: string }[]>([]);
-  const [hoveredHist, setHoveredHist] = useState<number | null>(null);
-  const [,            setTrigger]     = useState(0);
-
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef   = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [responses, loading]);
 
-  // ── Session ID ───────────────────────────────────────────────────────────────
+  // ── Session ID — same pattern as fleet copilot ───────────────────────────────
   useEffect(() => {
-    const userId = String(user?.user?.id || user?.user?.userId || 'dt_user');
-    const key    = `dt_session_${userId}`;
-    let sid      = localStorage.getItem(key);
-    if (!sid) {
-      sid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      localStorage.setItem(key, sid);
+    const userId = user?.user?.id || user?.user?.userId;
+    if (!userId) return;
+    const sessionKey  = `dt_session_${userId}`;
+    const loginKey    = `dt_login_user`;
+    const lastLogin   = localStorage.getItem(loginKey);
+    let   savedSid    = localStorage.getItem(sessionKey);
+    if (!savedSid || lastLogin !== userId.toString()) {
+      savedSid = `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      localStorage.setItem(sessionKey, savedSid);
+      localStorage.setItem(loginKey, userId.toString());
     }
-    setSessionId(sid);
+    setSessionId(savedSid);
   }, [user]);
 
-  // ── Chat history — uses rest-proxy, silently skips on 403/404 ───────────────
+  // ── Chat history — same pattern as fleet copilot ─────────────────────────────
   useEffect(() => {
-    const fetchHistory = async () => {
+    const fetchChatHistory = async () => {
       try {
-        const userId   = String(user?.user?.id || user?.user?.userId || '');
-        const spaceKey = String(user?.user?.spaceKey || '');
-
-        const res = await fetch(`/rest-proxy/vc_chat_history_older?user_id=${userId}`, {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            // Use the space-aware credentials from the logged-in user's space
-            clientid:     `GSUSJGITCDXHEDBNLIUD@${spaceKey}`,
-            appname:      'demo',
-            clientsecret: 'GSVDOAFXOXAAFTONROLX1774026824090',
-          },
-        });
-        if (!res.ok) return; // 403/404 — history unavailable, continue silently
+        const userId = user?.user?.id || user?.user?.userId;
+        if (!userId) return;
+        const spaceKey = user?.user?.spaceKey;
+        const res = await fetch(
+          `/rest-proxy/vc_chat_history_older?user_id=${userId}`,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              clientid:     `VTBPJEQBEEDBEQSHIXDJ@${spaceKey}`,
+              appname:      'valcode_demo_api',
+              clientsecret: 'ESUKBCLCYETVMHAZPQXW1760338574796',
+            },
+          }
+        );
+        if (!res.ok) return;
         const text = await res.text();
-        if (!text || (!text.startsWith('{') && !text.startsWith('['))) return;
-        const data = JSON.parse(text);
-        setChatHistory(Array.isArray(data) ? data : []);
-      } catch {
-        // History is optional — never crash the copilot if this fails
+        const data = (text.startsWith('{') || text.startsWith('[')) ? JSON.parse(text) : [];
+        setQuestionHistory(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error('Error fetching chat history:', err);
       }
     };
-    fetchHistory();
+    fetchChatHistory();
   }, [user]);
 
-  // ── Load history session ─────────────────────────────────────────────────────
-  const loadHistorySession = async (histSessionId: string) => {
-    const userId   = String(user?.user?.id || user?.user?.userId || '');
-    const spaceKey = String(user?.user?.spaceKey || '');
+  // ── Load history detail — same pattern as fleet copilot ──────────────────────
+  const fetchHistoryDetail = async (userId: string, historySessionId: string) => {
     setLoading(true);
-    setMessages([]);
     try {
+      const spaceKey = user?.user?.spaceKey;
       const res = await fetch(
-        `/rest-proxy/vc_chat_history?user_id=${userId}&session_id=${histSessionId}`,
+        `/rest-proxy/vc_chat_history?user_id=${userId}&session_id=${historySessionId}`,
         {
+          method: 'GET',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
-            clientid:     `GSUSJGITCDXHEDBNLIUD@${spaceKey}`,
-            appname:      'demo',
-            clientsecret: 'GSVDOAFXOXAAFTONROLX1774026824090',
+            clientid:     `VTBPJEQBEEDBEQSHIXDJ@${spaceKey}`,
+            appname:      'valcode_demo_api',
+            clientsecret: 'ESUKBCLCYETVMHAZPQXW1760338574796',
           },
         }
       );
       if (!res.ok) return;
       const data = await res.json();
-      if (!Array.isArray(data)) return;
 
-      const rebuilt: Message[] = [];
-      for (const item of data) {
-        if (!item) continue;
-        let rawResp: any = {};
-        try { rawResp = JSON.parse(item.response); } catch { rawResp = { response: item.response }; }
-        rebuilt.push({
-          role: 'user', text: String(item.question || ''),
-          parsed: null, isError: false, timestamp: new Date(),
-        });
-        rebuilt.push({
-          role: 'assistant', text: '',
-          parsed: parseResponse(rawResp),
-          isError: false, timestamp: new Date(),
-        });
-      }
-      setMessages(rebuilt);
-      setSessionId(histSessionId);
-    } catch (e) {
-      console.error('[loadHistorySession]', e);
+      // Parse history responses — same double-parse pattern as fleet copilot
+      const parsedResponses = data.map((item: any) => {
+        let firstParsed: any = {};
+        try { firstParsed = JSON.parse(item.response); }
+        catch { firstParsed = { response: item.response }; }
+
+        let finalParsed: any = {};
+        try { finalParsed = JSON.parse(firstParsed.response); }
+        catch { finalParsed = firstParsed; }
+
+        const { tableHTML, suggestionList } = buildResponseParts(finalParsed);
+        const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed);
+
+        return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList };
+      });
+
+      setResponses(parsedResponses);
+      setSessionId(historySessionId);
+    } catch (err) {
+      console.error('Error fetching history detail:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Delete history ───────────────────────────────────────────────────────────
-  const deleteHistorySession = async (e: React.MouseEvent, sid: string) => {
-    e.stopPropagation();
-    if (!window.confirm('Delete this chat history?')) return;
-    const userId   = String(user?.user?.id || user?.user?.userId || '');
-    const spaceKey = String(user?.user?.spaceKey || '');
+  // ── Safe data parser — identical to fleet copilot ────────────────────────────
+  const safeParseData = (data: any): any[] => {
+    if (!data) return [];
     try {
+      if (Array.isArray(data)) return data;
+      if (typeof data === 'object') return [data];
+      if (typeof data === 'string') {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) return parsed;
+        if (typeof parsed === 'object') return [parsed];
+      }
+    } catch (err) {
+      console.warn('safeParseData: Unable to parse data field', err);
+    }
+    return [];
+  };
+
+  // ── Build table HTML — identical to fleet copilot ────────────────────────────
+  const buildTableHTML = (parsedData: any[]): string => {
+    if (!parsedData.length) return '';
+    const keys = Object.keys(parsedData[0]);
+    const headers = keys.map(k => {
+      const formatted = k.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      return `<th style="padding:6px; border:1px solid #2a2a38; text-align:left; color:#9090b0; background:#1f1f2e; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">${formatted}</th>`;
+    }).join('');
+    const rows = parsedData.map(row =>
+      `<tr style="border-bottom:1px solid #1a1a28;">${keys.map(k =>
+        `<td style="padding:8px 13px; color:#c0c0e0; font-size:13px;">${row[k] ?? '—'}</td>`
+      ).join('')}</tr>`
+    ).join('');
+    return `<div style="margin-top:14px; overflow-x:auto; border-radius:10px; border:1px solid #2a2a38;">
+      <table style="border-collapse:collapse; width:100%; font-size:13px;">
+        <thead><tr style="background:#1f1f2e;">${headers}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+  };
+
+  // ── Build response parts — same logic as fleet copilot ───────────────────────
+  const buildResponseParts = (parsedResponse: any) => {
+    const parsedData  = safeParseData(parsedResponse?.data);
+    const tableHTML   = buildTableHTML(parsedData);
+    let suggestionList: string[] = [];
+    const rawSugg = parsedResponse?.visualization?.Suggestions || parsedResponse?.visualization?.suggestions;
+    if (rawSugg) {
+      suggestionList = Array.isArray(rawSugg)
+        ? rawSugg
+        : String(rawSugg).split(',').map((s: string) => s.trim()).filter(Boolean);
+    }
+    return { tableHTML, suggestionList };
+  };
+
+  const buildHtmlResponse = (tableHTML: string, parsedResponse: any): string => {
+    const viz = parsedResponse?.visualization || {};
+    return `<div style="font-family: sans-serif; line-height: 1.7; color: #c0c0e0;">
+      ${tableHTML}
+      ${viz.Answer   || viz.answer   || ''}
+      ${viz.Analysis || viz.analysis || ''}
+      ${parsedResponse?.explanation ? `<p style="color:#9090b0; font-style:italic; font-size:13px;">${parsedResponse.explanation}</p>` : ''}
+    </div>`;
+  };
+
+  // ── handleSend — modelled exactly on fleet copilot ───────────────────────────
+  const handleSend = async (customText?: string) => {
+    const textToSend = customText || inputText;
+    if (!textToSend.trim()) return;
+
+    setLoading(true);
+    try {
+      setQuestionHistory(prev => [
+        { context: textToSend, session_id: sessionId || 'new' },
+        ...prev,
+      ]);
+
+      const userId   = user?.user?.id || user?.user?.userId;
+      const spaceKey = user?.user?.spaceKey;
+      const authToken = token;
+
+      // Headers identical to fleet copilot + cache-control
+      const headers: Record<string, string> = {
+        accept:           'application/json, text/plain, */*',
+        'content-type':   'application/x-www-form-urlencoded',
+        authtoken:        authToken,
+        spacekey:         spaceKey,
+        userid:           String(userId),
+        'cache-control':  'no-cache',
+      };
+
+      const bodyData = new URLSearchParams({
+        serviceType: 'process_text',
+        data: JSON.stringify({
+          text:             textToSend,   // RAW — no modification, same as fleet copilot
+          userID:           String(userId),
+          sessionID:        sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          assistId:         DT_ASSIST_ID,
+          connector:        DT_CONNECTOR,
+          description:      DT_DESCRIPTION,
+          tables:           DT_TABLES,
+          selected_files:   [],
+          type:             'connector',
+          documentStoreIds: DT_TABLES,
+          spaceKey:         spaceKey,
+        }),
+        spacekey: spaceKey,
+      });
+
+      const response = await fetch(BIZVIZ_URL, { method: 'POST', headers, body: bodyData });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('BizWiz error:', errText);
+        setResponses(prev => [...prev, {
+          question: textToSend,
+          error: `Server returned ${response.status}: ${errText.slice(0, 200)}`,
+        }]);
+        return;
+      }
+
+      const data = await response.json();
+
+      // Parse response — same pattern as fleet copilot
+      let parsedResponse: any;
+      try {
+        parsedResponse = JSON.parse(data.response);
+      } catch {
+        parsedResponse = { html: data.response };
+      }
+
+      let cleanedResponse = '';
+      let suggestionList: string[] = [];
+
+      try {
+        if (parsedResponse && !parsedResponse.html) {
+          delete parsedResponse.query;
+          delete parsedResponse.dashboards;
+          delete parsedResponse.data_refreshed_at;
+
+          const { tableHTML, suggestionList: suggs } = buildResponseParts(parsedResponse);
+          suggestionList = suggs;
+          cleanedResponse = buildHtmlResponse(tableHTML, parsedResponse);
+        } else {
+          cleanedResponse = parsedResponse?.html || 'No response available';
+        }
+      } catch (err) {
+        console.warn('Response handling failed — fallback to raw string', err);
+        cleanedResponse = data.response || 'No response available';
+      }
+
+      setResponses(prev => [...prev, {
+        question:     data.original_text || textToSend,
+        htmlResponse: cleanedResponse,
+        suggestions:  suggestionList,
+      }]);
+
+      // Ingestion — fire and forget, same as fleet copilot
+      try {
+        await fetch('/ingestion-proxy/ingestion/dataIngestion', {
+          method:  'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
+            IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
+          },
+          body: JSON.stringify({
+            question:   textToSend,
+            response:   JSON.stringify(data),
+            user_id:    userId,
+            action:     'add',
+            session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+            spacekey:   spaceKey,
+            user_name:  user?.user?.fullName || 'Unknown_User',
+            user_email: user?.user?.emailID  || 'unknown@ravity.io',
+          }),
+        });
+      } catch (ingErr) {
+        console.error('Ingestion error:', ingErr);
+      }
+
+    } catch (error) {
+      console.error('Error:', error);
+      setResponses(prev => [...prev, { question: inputText, error: 'Something went wrong!' }]);
+    } finally {
+      setLoading(false);
+      setInputText('');
+    }
+  };
+
+  // ── Delete history — same as fleet copilot ───────────────────────────────────
+  const handleDeleteHistory = async (sessionIdToDelete: string) => {
+    try {
+      const userId = user?.user?.id || user?.user?.userId;
+      if (!userId || !sessionIdToDelete) return;
+      setLoading(true);
       await fetch('/ingestion-proxy/ingestion/dataIngestion', {
         method:  'POST',
         headers: {
@@ -460,352 +337,314 @@ const AiAnalysisDashboard: React.FC = () => {
           IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
         },
         body: JSON.stringify({
-          question: '', response: '', user_id: userId, action: 'delete',
-          session_id: sid, spacekey: spaceKey,
-          user_name:  user?.user?.fullName || 'Unknown',
+          question:   '',
+          response:   '',
+          user_id:    userId,
+          action:     'delete',
+          session_id: sessionIdToDelete,
+          spacekey:   user?.user?.spaceKey,
+          user_name:  user?.user?.fullName || 'Unknown_User',
           user_email: user?.user?.emailID  || 'unknown@ravity.io',
         }),
       });
-      setChatHistory(prev => prev.filter(h => h.session_id !== sid));
-    } catch {}
-  };
-
-  // ── Send message ─────────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (overrideText?: string) => {
-    const text = (overrideText ?? inputText).trim();
-    if (!text || loading) return;
-
-    // Context injected as natural language that maps directly to synthetic_data_kpi fields
-    const vinPart  = vin ? ` for vin '${vin}'` : ' across all vehicles';
-    const datePart = apiParams.startdate
-      ? ` where process_date is between '${apiParams.startdate}' and '${apiParams.enddate}'`
-      : '';
-    const contextualText = `${text}${vinPart}${datePart}`;
-
-    setInputText('');
-    setMessages(prev => [...prev, {
-      role: 'user', text, parsed: null, isError: false, timestamp: new Date(),
-    }]);
-    setLoading(true);
-
-    // spaceKey and userID MUST match the logged-in user's authtoken
-    // assistId/connector are fixed (they identify the VDTSIA assistant)
-    const userId    = String(user?.user?.id || user?.user?.userId || '');
-    const spaceKey  = String(user?.user?.spaceKey || '');
-    const authToken = token || '';
-    const sid       = sessionId ||
-      `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    try {
-      const body = new URLSearchParams({
-        serviceType: 'process_text',
-        data: JSON.stringify({
-          text:             contextualText,
-          userID:           String(userId),
-          sessionID:        sid,
-          assistId:         BIZVIZ_ASSIST_ID,
-          connector:        BIZVIZ_CONNECTOR,
-          description:      BIZVIZ_DESCRIPTION,
-          tables:           BIZVIZ_TABLES,
-          selected_files:   [],
-          type:             'connector',
-          documentStoreIds: BIZVIZ_TABLES,
-          spaceKey:         spaceKey,
-        }),
-        spacekey: spaceKey,
-      });
-
-      const res = await fetch(BIZVIZ_ENDPOINT, {
-        method:  'POST',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded',
-          accept:         'application/json, text/plain, */*',
-          authtoken:      authToken,
-          spacekey:       spaceKey,
-          userid:         userId,
-        },
-        body,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        throw new Error(`Server returned ${res.status}${errText ? ': ' + errText.slice(0, 150) : ''}`);
-      }
-
-      // Parse response safely — handle both JSON and plain text
-      let data: any = {};
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        data = await res.json();
-      } else {
-        const txt = await res.text();
-        try { data = JSON.parse(txt); } catch { data = { response: txt }; }
-      }
-
-      const parsed = parseResponse(data);
-
-      setMessages(prev => [...prev, {
-        role: 'assistant', text: '', parsed, isError: false, timestamp: new Date(),
-      }]);
-      setChatHistory(prev => [{ context: text, session_id: sid }, ...prev.slice(0, 49)]);
-
-      // Ingestion — fire and forget
-      fetch('/ingestion-proxy/ingestion/dataIngestion', {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
-          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
-        },
-        body: JSON.stringify({
-          question: text, response: JSON.stringify(data),
-          user_id: userId, action: 'add', session_id: sid, spacekey: spaceKey,
-          user_name:  user?.user?.fullName || 'Unknown',
-          user_email: user?.user?.emailID  || 'unknown@ravity.io',
-        }),
-      }).catch(() => {});
-
-    } catch (err: any) {
-      const errMsg = err?.message || 'Something went wrong.';
-      setMessages(prev => [...prev, {
-        role: 'assistant', text: errMsg,
-        parsed: null, isError: true, timestamp: new Date(),
-      }]);
+      setQuestionHistory(prev => prev.filter(h => h.session_id !== sessionIdToDelete));
+    } catch (error) {
+      console.error('Error deleting history:', error);
     } finally {
       setLoading(false);
-      setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [inputText, loading, vin, apiParams, token, user, sessionId]); // eslint-disable-line
-
-  const startNewChat = () => {
-    setMessages([]);
-    setInputText('');
-    const userId = String(user?.user?.id || user?.user?.userId || 'dt_user');
-    const newSid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setSessionId(newSid);
-    localStorage.setItem(`dt_session_${userId}`, newSid);
   };
 
-  const firstName   = user?.user?.fullName?.split(' ')[0] || 'there';
-  const showWelcome = messages.length === 0;
+  // ── Initial suggestions — include VIN naturally so agent knows context ────────
+  const vinDisplay = vin ? vin.slice(-8) : 'selected VIN';
+  const initSuggestions = [
+    `How many harsh acceleration, braking and overspeeding events for VIN ${vin || '027a07bca0c239ca'}?`,
+    `What is the fuel efficiency and total distance for VIN ${vin || '027a07bca0c239ca'}?`,
+    `Show speed distribution for VIN ${vin || '027a07bca0c239ca'}`,
+    `Compare VIN ${vin || '027a07bca0c239ca'} against the fleet baseline for all KPIs`,
+  ];
 
   return (
     <>
       <style>{`
-        .dt-copilot-wrap{display:flex;height:calc(100vh - 72px);font-family:'DM Sans',sans-serif;background:#0f0f13;overflow:hidden}
-        .dt-sidebar{width:260px;min-width:260px;background:#17171f;border-right:1px solid #2a2a38;display:flex;flex-direction:column;transition:width 0.25s;overflow:hidden}
-        .dt-sidebar.collapsed{width:56px;min-width:56px}
-        .dt-sidebar-btn{display:flex;align-items:center;gap:10px;padding:14px 16px;color:#9090b0;font-size:13px;font-weight:600;cursor:pointer;border-bottom:1px solid #2a2a38;transition:background 0.15s,color 0.15s;white-space:nowrap;background:none;border-left:none;border-right:none;border-top:none;width:100%;text-align:left;font-family:inherit}
-        .dt-sidebar-btn:hover{background:#1f1f2e !important;color:#fff}
-        .dt-hist-list{flex:1;overflow-y:auto;padding:8px}
-        .dt-hist-list::-webkit-scrollbar{width:4px}.dt-hist-list::-webkit-scrollbar-thumb{background:#2a2a38;border-radius:4px}
-        .dt-hist-item{display:flex;align-items:center;gap:6px;padding:9px 10px;border-radius:8px;cursor:pointer;color:#8080a0;font-size:12px;transition:all 0.15s;margin-bottom:2px}
-        .dt-hist-item:hover{background:#1f1f2e;color:#e0e0f0}
-        .dt-hist-item span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .dt-hist-del{flex-shrink:0;background:none;border:none;color:transparent;cursor:pointer;font-size:13px;padding:2px 5px;border-radius:4px;transition:all 0.15s}
-        .dt-hist-item:hover .dt-hist-del{color:#ff6060}
-        .dt-collapse-btn{padding:12px 16px;border-top:1px solid #2a2a38;color:#404060;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:color 0.15s}
-        .dt-collapse-btn:hover{color:#9090b0}
-        .dt-chat-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0f0f13}
-        .dt-context-bar{display:flex;align-items:center;background:#13131b;border-bottom:1px solid #1e1e2a;flex-shrink:0;flex-wrap:wrap}
-        .dt-ctx-pill{display:flex;align-items:center;gap:7px;padding:10px 18px;font-size:12px;border-right:1px solid #1e1e2a}
-        .dt-ctx-label{color:#404060;text-transform:uppercase;letter-spacing:0.6px;font-size:10px;font-weight:600}
-        .dt-ctx-value{color:#e91e8c;font-family:monospace;font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .dt-ctx-value.dim{color:#404060}
-        .dt-messages{flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:22px}
-        .dt-messages::-webkit-scrollbar{width:5px}.dt-messages::-webkit-scrollbar-thumb{background:#2a2a38;border-radius:4px}
-        .dt-welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 32px;text-align:center}
-        .dt-welcome-logo{width:54px;height:54px;border-radius:16px;background:linear-gradient(135deg,#e91e8c,#c2185b);display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 18px;box-shadow:0 8px 32px #e91e8c44}
-        .dt-welcome h2{color:#e0e0f0;font-size:22px;font-weight:700;margin:0 0 10px}
-        .dt-welcome p{color:#6060a0;font-size:14px;margin:0 0 28px;max-width:440px;line-height:1.7}
-        .dt-vin-badge{display:inline-flex;align-items:center;gap:8px;background:#1f1f2e;border:1px solid #2a2a38;border-radius:20px;padding:7px 16px;font-size:12px;color:#9090b0;margin-bottom:28px}
-        .dt-vin-badge strong{color:#e91e8c;font-family:monospace}
-        .dt-init-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:580px;width:100%}
-        .dt-init-card{background:#17171f;border:1px solid #2a2a38;border-radius:12px;padding:14px 16px;cursor:pointer;text-align:left;color:#8080a0;font-size:13px;line-height:1.5;transition:all 0.2s;font-family:inherit}
-        .dt-init-card:hover{border-color:#e91e8c55;background:#1f1f2e;color:#e0e0f0;transform:translateY(-2px)}
-        .dt-msg-user{display:flex;justify-content:flex-end}
-        .dt-bubble-user{background:linear-gradient(135deg,#e91e8c,#c2185b);color:#fff;padding:12px 18px;border-radius:18px 18px 4px 18px;max-width:68%;font-size:14px;line-height:1.6;box-shadow:0 4px 16px #e91e8c30}
-        .dt-msg-ai{display:flex;align-items:flex-start;gap:12px}
-        .dt-ai-avatar{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#e91e8c,#c2185b);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;margin-top:2px;box-shadow:0 2px 8px #e91e8c40}
-        .dt-bubble-ai{background:#17171f;border:1px solid #2a2a38;color:#c0c0e0;padding:16px 20px;border-radius:4px 18px 18px 18px;max-width:calc(100% - 44px);font-size:14px;line-height:1.8;width:100%;box-sizing:border-box}
-        .dt-bubble-ai.error{border-color:#ff4d4d44;background:#1a1015;color:#ff8080}
-        .dt-bubble-ai p{margin:0 0 8px}.dt-bubble-ai p:last-child{margin:0}
-        .dt-bubble-ai strong{color:#e0e0f0}
-        .dt-bubble-ai ul,.dt-bubble-ai ol{padding-left:18px;margin:6px 0}
-        .dt-ts{font-size:10px;color:#303050;margin-top:5px;text-align:right}
-        .dt-table-wrap{overflow-x:auto;border-radius:10px;border:1px solid #2a2a38}
-        .dt-table{border-collapse:collapse;width:100%;font-size:12.5px}
-        .dt-table thead tr{background:#1f1f2e}
-        .dt-table th{padding:9px 13px;text-align:left;color:#9090b0;font-weight:600;border-bottom:1px solid #2a2a38;white-space:nowrap;text-transform:uppercase;letter-spacing:0.4px;font-size:11px}
-        .dt-table td{padding:8px 13px;border-bottom:1px solid #1a1a28;color:#c0c0e0}
-        .dt-table tbody tr:last-child td{border-bottom:none}
-        .dt-table tbody tr:hover td{background:#1f1f2e}
-        .dt-suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-        .dt-sugg-chip{background:#1a1a28;border:1px solid #2a2a38;color:#8080b0;padding:7px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all 0.2s;font-family:inherit;text-align:left}
-        .dt-sugg-chip:hover{border-color:#e91e8c55;color:#e0e0f0;background:#1f1f2e}
-        .dt-typing{display:flex;align-items:flex-start;gap:12px}
-        .dt-typing-dots{display:flex;gap:5px;align-items:center;padding:14px 18px;background:#17171f;border:1px solid #2a2a38;border-radius:4px 18px 18px 18px}
-        .dt-typing-dots span{width:7px;height:7px;border-radius:50%;background:#e91e8c;animation:dtPulse 1.2s infinite}
-        .dt-typing-dots span:nth-child(2){animation-delay:.2s}
-        .dt-typing-dots span:nth-child(3){animation-delay:.4s}
-        @keyframes dtPulse{0%,100%{opacity:.2;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
-        .dt-input-bar{padding:14px 24px 18px;background:#13131b;border-top:1px solid #1e1e2a;flex-shrink:0}
-        .dt-input-inner{display:flex;align-items:center;gap:10px;background:#17171f;border:1.5px solid #2a2a38;border-radius:14px;padding:4px 4px 4px 16px;transition:border-color 0.2s}
-        .dt-input-inner:focus-within{border-color:#e91e8c55;box-shadow:0 0 0 3px #e91e8c0f}
-        .dt-input-field{flex:1;background:none;border:none;outline:none;color:#e0e0f0;font-size:14px;font-family:inherit;padding:8px 0}
-        .dt-input-field::placeholder{color:#404060}
-        .dt-send-btn{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0;transition:all 0.2s;box-shadow:0 2px 10px #e91e8c40}
-        .dt-send-btn:hover:not(:disabled){transform:scale(1.08)}
-        .dt-send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
-        .dt-input-hint{font-size:11px;color:#2a2a48;margin-top:7px;text-align:center}
-        @media(max-width:768px){.dt-sidebar{display:none}.dt-init-grid{grid-template-columns:1fr}.dt-messages{padding:14px}}
+        @keyframes dtSpin { to { transform: rotate(360deg); } }
+        .dt-typing span { display:inline-block; width:7px; height:7px; border-radius:50%;
+          background:#e91e8c; margin:0 2px; animation:dtBounce 1.2s infinite; }
+        .dt-typing span:nth-child(2){ animation-delay:.2s }
+        .dt-typing span:nth-child(3){ animation-delay:.4s }
+        @keyframes dtBounce { 0%,100%{opacity:.2;transform:scale(.85)} 50%{opacity:1;transform:scale(1.1)} }
       `}</style>
 
-      <div className="dt-copilot-wrap">
+      <div style={{ display:'flex', height:'calc(100vh - 72px)', fontFamily:'Arial, sans-serif', background:'#0f0f13' }}>
 
-        {/* Sidebar */}
-        <div className={`dt-sidebar${historyOpen ? '' : ' collapsed'}`}>
-          <button className="dt-sidebar-btn" style={{ borderBottom: '1px solid #2a2a38' }} onClick={startNewChat}>
-            <span>✦</span>
-            {historyOpen && <span>New Conversation</span>}
-          </button>
-          <button className="dt-sidebar-btn" style={{ borderBottom: '1px solid #2a2a38' }} onClick={() => setHistoryOpen(p => !p)}>
-            <span>🕑</span>
-            {historyOpen && <span>History</span>}
-          </button>
-          {historyOpen && (
-            <div className="dt-hist-list">
-              {chatHistory.length === 0 && (
-                <div style={{ padding: '16px 10px', color: '#303050', fontSize: 12 }}>
-                  No previous conversations
-                </div>
-              )}
-              {chatHistory.map((item, idx) => (
-                <div key={idx} className="dt-hist-item"
-                  onMouseEnter={() => setHoveredHist(idx)}
-                  onMouseLeave={() => setHoveredHist(null)}
-                  onClick={() => loadHistorySession(item.session_id)}>
-                  <span title={item.context}>💬 {item.context}</span>
-                  <button className="dt-hist-del"
-                    onClick={e => deleteHistorySession(e, item.session_id)}
-                    title="Delete">🗑</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="dt-collapse-btn" onClick={() => setHistoryOpen(p => !p)}>
-            <span>{historyOpen ? '◀' : '▶'}</span>
-            {historyOpen && <span>Collapse</span>}
+        {/* ── Sidebar ── */}
+        <div style={{
+          width: historyOpen ? 260 : 60, minWidth: historyOpen ? 260 : 60,
+          background:'#17171f', borderRight:'1px solid #2a2a38',
+          display:'flex', flexDirection:'column', transition:'width 0.25s', overflow:'hidden',
+        }}>
+          {/* New chat */}
+          <div onClick={() => { setInputText(''); setResponses([]); setSelectedSuggestion(''); }}
+            style={{ padding:'14px 16px', borderBottom:'1px solid #2a2a38', fontWeight:600,
+              cursor:'pointer', color:'#9090b0', display:'flex', alignItems:'center', gap:10,
+              whiteSpace:'nowrap', fontSize:13 }}
+            onMouseEnter={e => (e.currentTarget.style.background='#1f1f2e')}
+            onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
+            💬 {historyOpen && 'New chat'}
           </div>
+
+          {/* History toggle */}
+          <div onClick={() => setHistoryOpen(p => !p)}
+            style={{ padding:'14px 16px', borderBottom:'1px solid #2a2a38', fontWeight:600,
+              cursor:'pointer', color:'#9090b0', display:'flex', alignItems:'center', gap:10,
+              whiteSpace:'nowrap', fontSize:13 }}
+            onMouseEnter={e => (e.currentTarget.style.background='#1f1f2e')}
+            onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
+            🕑 {historyOpen && 'History'}
+          </div>
+
+          {historyOpen && (
+            <ul style={{ listStyle:'none', margin:0, padding:8, overflowY:'auto',
+              flex:1, scrollbarWidth:'thin' }}>
+              {questionHistory.length === 0 && (
+                <li style={{ padding:'12px 10px', color:'#404060', fontSize:12 }}>
+                  No previous conversations
+                </li>
+              )}
+              {questionHistory.map((item, idx) => (
+                <li key={idx} style={{
+                  display:'flex', alignItems:'center', justifyContent:'space-between',
+                  padding:'9px 10px', borderRadius:8, marginBottom:2,
+                  cursor:'pointer', color:'#8080a0', fontSize:12, transition:'all 0.15s',
+                  ...(hoveredIndex1 === idx ? { background:'#1f1f2e', color:'#e0e0f0' } : {}),
+                }}
+                  onMouseEnter={() => setHoveredIndex1(idx)}
+                  onMouseLeave={() => setHoveredIndex1(null)}>
+                  <div title={item.context}
+                    style={{ flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', cursor:'pointer' }}
+                    onClick={() => {
+                      const userId = user?.user?.id || user?.user?.userId;
+                      if (userId && item.session_id) fetchHistoryDetail(String(userId), item.session_id);
+                    }}>
+                    💬 {item.context}
+                  </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); if (window.confirm('Delete this chat history?')) handleDeleteHistory(item.session_id); }}
+                    style={{ background:'none', border:'none', cursor:'pointer', padding:'2px 5px',
+                      borderRadius:4, color:'transparent', transition:'all 0.15s', marginLeft:6 }}
+                    onMouseEnter={e => { e.currentTarget.style.color='#ff6060'; e.currentTarget.style.background='#3a1a1a'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color='transparent'; e.currentTarget.style.background='none'; }}>
+                    <Icon icon='Delete' size='sm' forceFamily='material' />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
-        {/* Main chat */}
-        <div className="dt-chat-main">
+        {/* ── Main chat area ── */}
+        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
-          {/* Context bar */}
-          <div className="dt-context-bar">
-            <div className="dt-ctx-pill">
-              <span className="dt-ctx-label">VIN</span>
-              <span className={`dt-ctx-value${vin ? '' : ' dim'}`}>{vin || 'not selected'}</span>
-            </div>
-            <div className="dt-ctx-pill">
-              <span className="dt-ctx-label">From</span>
-              <span className="dt-ctx-value">{apiParams.startdate}</span>
-            </div>
-            <div className="dt-ctx-pill">
-              <span className="dt-ctx-label">To</span>
-              <span className="dt-ctx-value">{apiParams.enddate}</span>
-            </div>
-            <div style={{ padding: '4px 12px' }}>
+          {/* Context bar + date filter */}
+          <div style={{ display:'flex', alignItems:'center', background:'#13131b',
+            borderBottom:'1px solid #1e1e2a', flexShrink:0, flexWrap:'wrap' }}>
+            {[
+              { label:'VIN',  value: vin || 'not selected', pink: !!vin },
+              { label:'From', value: apiParams.startdate,   pink: true },
+              { label:'To',   value: apiParams.enddate,     pink: true },
+            ].map(p => (
+              <div key={p.label} style={{ display:'flex', alignItems:'center', gap:7,
+                padding:'10px 18px', fontSize:12, borderRight:'1px solid #1e1e2a' }}>
+                <span style={{ color:'#404060', textTransform:'uppercase', letterSpacing:'0.6px',
+                  fontSize:10, fontWeight:600 }}>{p.label}</span>
+                <span style={{ color: p.pink ? '#e91e8c' : '#404060', fontFamily:'monospace',
+                  fontSize:12, maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  {p.value}
+                </span>
+              </div>
+            ))}
+            <div style={{ padding:'4px 12px' }}>
               <DateFilterBar title="" onApply={() => setTrigger(p => p + 1)} />
             </div>
           </div>
 
-          {/* Welcome or messages */}
-          {showWelcome ? (
-            <div className="dt-welcome">
-              <div className="dt-welcome-logo">🤖</div>
-              <h2>Hey {firstName}, I'm your Vehicle Copilot</h2>
-              <p>
-                Ask me anything about this vehicle — fuel efficiency, fault codes,
-                driving behaviour, maintenance, warranty risk, or fleet comparisons.
-                I query the telematics data directly and show you charts and tables.
+          {/* Welcome screen */}
+          {responses.length === 0 && (
+            <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center',
+              justifyContent:'center', padding:'40px 32px', textAlign:'center', overflowY:'auto' }}>
+              <div style={{ width:54, height:54, borderRadius:16, background:'linear-gradient(135deg,#e91e8c,#c2185b)',
+                display:'flex', alignItems:'center', justifyContent:'center', fontSize:26,
+                margin:'0 auto 18px', boxShadow:'0 8px 32px #e91e8c44' }}>🤖</div>
+              <h2 style={{ color:'#e0e0f0', fontSize:22, fontWeight:700, margin:'0 0 10px' }}>
+                Hey {user?.user?.fullName?.split(' ')[0] || 'there'}, How may I assist you today?
+              </h2>
+              <p style={{ color:'#6060a0', fontSize:14, margin:'0 0 16px', maxWidth:440, lineHeight:1.7 }}>
+                Ask me anything about vehicle telematics — harsh events, fuel efficiency, speed,
+                CO₂ emissions or fleet comparisons. Include the VIN in your question for specific results.
               </p>
               {vin && (
-                <div className="dt-vin-badge">
-                  <span>Analysing</span>
-                  <strong>{vin}</strong>
+                <div style={{ display:'inline-flex', alignItems:'center', gap:8, background:'#1f1f2e',
+                  border:'1px solid #2a2a38', borderRadius:20, padding:'7px 16px', fontSize:12,
+                  color:'#9090b0', marginBottom:24 }}>
+                  <span>Active VIN:</span>
+                  <strong style={{ color:'#e91e8c', fontFamily:'monospace' }}>{vin}</strong>
                   <span>·</span>
                   <span>{apiParams.startdate} → {apiParams.enddate}</span>
                 </div>
               )}
-              <div className="dt-init-grid">
-                {INITIAL_SUGGESTIONS.map((q, i) => (
-                  <button key={i} className="dt-init-card" onClick={() => sendMessage(q)}>{q}</button>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, maxWidth:600, width:'100%' }}>
+                {initSuggestions.map((q, i) => (
+                  <button key={i}
+                    style={{
+                      background: hoveredIndex === i ? '#1f1f2e' : '#17171f',
+                      border: `1px solid ${hoveredIndex === i ? '#e91e8c55' : '#2a2a38'}`,
+                      borderRadius:12, padding:'14px 16px', cursor:'pointer', textAlign:'left',
+                      color: hoveredIndex === i ? '#e0e0f0' : '#8080a0', fontSize:13, lineHeight:1.5,
+                      transition:'all 0.2s', fontFamily:'inherit',
+                    }}
+                    onMouseEnter={() => setHoveredIndex(i)}
+                    onMouseLeave={() => setHoveredIndex(null)}
+                    onClick={() => { setSelectedSuggestion(q); setInputText(q); handleSend(q); }}>
+                    {q}
+                  </button>
                 ))}
               </div>
             </div>
-          ) : (
-            <div className="dt-messages">
-              {messages.map((msg, idx) => (
+          )}
+
+          {/* Messages */}
+          {responses.length > 0 && (
+            <div style={{ flex:1, padding:'20px 28px', overflowY:'auto',
+              display:'flex', flexDirection:'column', gap:24 }}>
+              {responses.map((res, idx) => (
                 <div key={idx}>
-                  {msg.role === 'user' ? (
-                    <div className="dt-msg-user">
-                      <div>
-                        <div className="dt-bubble-user">{msg.text}</div>
-                        <div className="dt-ts">
-                          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
+                  {/* User bubble */}
+                  <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:8 }}>
+                    <div style={{ background:'linear-gradient(135deg,#e91e8c,#c2185b)', color:'#fff',
+                      padding:'12px 18px', borderRadius:'18px 18px 4px 18px', maxWidth:'68%',
+                      fontSize:14, lineHeight:1.6, boxShadow:'0 4px 16px #e91e8c30' }}>
+                      {res.question}
+                    </div>
+                  </div>
+
+                  {/* AI bubble */}
+                  {res.error ? (
+                    <div style={{ background:'#1a1015', border:'1px solid #ff4d4d44',
+                      color:'#ff8080', padding:'14px 18px', borderRadius:'4px 18px 18px 18px',
+                      fontSize:14 }}>
+                      {res.error}
                     </div>
                   ) : (
-                    <div className="dt-msg-ai">
-                      <div className="dt-ai-avatar">🤖</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className={`dt-bubble-ai${msg.isError ? ' error' : ''}`}>
-                          {msg.isError
-                            ? <p>{msg.text}</p>
-                            : <AssistantContent parsed={msg.parsed} onSuggestion={sendMessage} />
-                          }
-                        </div>
-                        <div className="dt-ts">
-                          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
+                    <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
+                      <div style={{ width:32, height:32, borderRadius:10, flexShrink:0, marginTop:2,
+                        background:'linear-gradient(135deg,#e91e8c,#c2185b)',
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                        fontSize:14, boxShadow:'0 2px 8px #e91e8c40' }}>🤖</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ background:'#17171f', border:'1px solid #2a2a38',
+                          padding:'16px 20px', borderRadius:'4px 18px 18px 18px',
+                          fontSize:14, lineHeight:1.8, maxWidth:'100%' }}
+                          dangerouslySetInnerHTML={{ __html: res.htmlResponse }} />
+                        {res.suggestions?.length > 0 && (
+                          <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:10 }}>
+                            {res.suggestions.map((s: string, i: number) => (
+                              <button key={i}
+                                style={{
+                                  background: hoveredIndex2 === i ? '#1f1f2e' : '#1a1a28',
+                                  border: `1px solid ${hoveredIndex2 === i ? '#e91e8c55' : '#2a2a38'}`,
+                                  color: hoveredIndex2 === i ? '#e0e0f0' : '#8080b0',
+                                  padding:'7px 14px', borderRadius:20, fontSize:12,
+                                  cursor:'pointer', transition:'all 0.2s', fontFamily:'inherit',
+                                  ...(selectedSuggestion === s ? { borderColor:'#e91e8c', color:'#e91e8c' } : {}),
+                                }}
+                                onMouseEnter={() => setHoveredIndex2(i)}
+                                onMouseLeave={() => setHoveredIndex2(null)}
+                                onClick={() => { setSelectedSuggestion(s); handleSend(s); }}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
               ))}
+
+              {/* Typing indicator */}
               {loading && (
-                <div className="dt-typing">
-                  <div className="dt-ai-avatar">🤖</div>
-                  <div className="dt-typing-dots"><span /><span /><span /></div>
+                <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
+                  <div style={{ width:32, height:32, borderRadius:10, flexShrink:0,
+                    background:'linear-gradient(135deg,#e91e8c,#c2185b)',
+                    display:'flex', alignItems:'center', justifyContent:'center', fontSize:14 }}>🤖</div>
+                  <div style={{ background:'#17171f', border:'1px solid #2a2a38',
+                    padding:'14px 18px', borderRadius:'4px 18px 18px 18px' }}>
+                    <span className="dt-typing"><span/><span/><span/></span>
+                  </div>
                 </div>
               )}
+
+              {/* Inline suggestions after last message */}
+              {!loading && responses.length > 0 && !responses[responses.length - 1]?.suggestions?.length && (
+                <div style={{ display:'flex', flexWrap:'wrap', gap:10, justifyContent:'center',
+                  padding:'12px 0', borderTop:'1px solid #1e1e2a' }}>
+                  {initSuggestions.map((question, index) => (
+                    <button key={index}
+                      style={{
+                        padding:'7px 14px', borderRadius:20,
+                        border: `1px solid ${hoveredIndex === index ? '#e91e8c55' : '#2a2a38'}`,
+                        background: hoveredIndex === index ? '#1f1f2e' : '#17171f',
+                        cursor:'pointer', fontSize:12, transition:'all 0.2s ease',
+                        color: hoveredIndex === index ? '#e0e0f0' : '#8080a0',
+                        fontFamily:'inherit',
+                      }}
+                      onMouseEnter={() => setHoveredIndex(index)}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                      onClick={() => { setSelectedSuggestion(question); setInputText(question); handleSend(question); }}>
+                      {question}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div ref={chatEndRef} />
             </div>
           )}
 
-          {/* Input */}
-          <div className="dt-input-bar">
-            <div className="dt-input-inner">
+          {/* Input bar */}
+          <div style={{ display:'flex', padding:'12px 20px', borderTop:'1px solid #1e1e2a',
+            background:'#13131b', gap:10, alignItems:'center' }}>
+            <div style={{ flex:1, display:'flex', alignItems:'center', background:'#17171f',
+              border:'1.5px solid #2a2a38', borderRadius:14, padding:'4px 4px 4px 16px',
+              transition:'border-color 0.2s' }}
+              onFocus={() => {}} >
               <input
-                ref={inputRef}
-                className="dt-input-field"
-                placeholder={vin ? `Ask about VIN ${vin}…` : 'Ask about this vehicle…'}
+                type="text"
+                placeholder={vin ? `Ask about VIN ${vinDisplay}… (include VIN in your question for specific data)` : 'Ask anything about vehicle telematics...'}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }}}
-                disabled={loading}
+                onKeyDown={e => e.key === 'Enter' && handleSend()}
+                style={{ flex:1, background:'none', border:'none', outline:'none',
+                  color:'#e0e0f0', fontSize:14, padding:'8px 0', fontFamily:'inherit' }}
               />
-              <button className="dt-send-btn"
-                onClick={() => sendMessage()}
-                disabled={loading || !inputText.trim()}
-                title="Send (Enter)">
-                ➤
-              </button>
             </div>
-            <div className="dt-input-hint">VIN &amp; date range are automatically included in every question</div>
+            <button onClick={() => handleSend()}
+              disabled={loading || !inputText.trim()}
+              style={{ width:42, height:42, borderRadius:10, flexShrink:0,
+                background: (loading || !inputText.trim()) ? '#2a2a38' : 'linear-gradient(135deg,#e91e8c,#c2185b)',
+                border:'none', cursor: (loading || !inputText.trim()) ? 'not-allowed' : 'pointer',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                color:'#fff', fontSize:16, transition:'all 0.2s',
+                boxShadow: (loading || !inputText.trim()) ? 'none' : '0 2px 10px #e91e8c40' }}>
+              {loading
+                ? <div style={{ width:16, height:16, border:'2px solid #aaa',
+                    borderTopColor:'transparent', borderRadius:'50%',
+                    animation:'dtSpin 0.8s linear infinite' }} />
+                : '➤'}
+            </button>
+          </div>
+          <div style={{ textAlign:'center', fontSize:11, color:'#2a2a48', paddingBottom:8 }}>
+            Include the VIN number in your question to get vehicle-specific results
           </div>
         </div>
       </div>
