@@ -7,7 +7,7 @@ import DateFilterBar from './DateFilterBar';
 // FIXED (belong to the VDTSIA assistant — never change):
 //   assistId:  3514581148
 //   connector: 238893540
-//   tables:    vt_overall_data, vt_overview_vehicle_info, vt_dtc_datagrid, ...
+//   tables:    synthetic_data_kpi, qac_kpi_baseline_data (connector 238893540)
 //
 // DYNAMIC (must match the logged-in user's authtoken — read from Redux):
 //   spaceKey:  user?.user?.spaceKey   ← server validates this == authtoken.space
@@ -16,38 +16,14 @@ import DateFilterBar from './DateFilterBar';
 const BIZVIZ_ENDPOINT  = '/bizviz-proxy/llmService';
 const BIZVIZ_ASSIST_ID = '3514581148';
 const BIZVIZ_CONNECTOR = '238893540';
-const BIZVIZ_TABLES = [
-  'vt_overall_data',          // per-trip KPIs: harsh events, fuel, speed, CO2
-  'vt_overview_vehicle_info', // static vehicle info: model, variant, fuel type
-  'vt_overview_veh_usage',    // vehicle usage summary: trips, distance, hours
-  'vt_dtc_all_occ_count',     // DTC fault occurrence counts
-  'vt_dtc_datagrid',          // DTC fault detail table
-  'vt_dtc_location_map',      // DTC fault locations
-  'vt_dtc_ststus_count',      // DTC status counts
-  'vt_dtc_tile',              // DTC tile summary
-  'vt_dtc_trend',             // DTC trend over time
-  'vt_fuel_events',           // fuel fill/drain events
-  'vt_ac_dist',               // AC temperature distribution
-  'vt_turn_perc',             // turn percentage data
-];
+const BIZVIZ_TABLES = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
 const BIZVIZ_DESCRIPTION =
-  'You are the Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) for Maruti Suzuki. ' +
-  'Query ONLY these collections: ' +
-  'vt_overall_data (per-trip KPIs: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, ' +
-  'overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, ' +
-  'idle_time, process_date, trip_start_time, trip_end_time), ' +
-  'vt_overview_vehicle_info (static info: vin, vehicle_model, vehicle_variant, fuel_type, engine_type, ' +
-  'transmission_type, manuf_date, sale_date, last_serv, can_id), ' +
-  'vt_overview_veh_usage (usage: vin, total_trips, total_distance, engine_hours, start_mileage, end_mileage), ' +
-  'vt_dtc_datagrid and vt_dtc_tile (DTC fault codes), ' +
-  'vt_fuel_events (fuel events), vt_ac_dist (AC data), vt_turn_perc (turns). ' +
-  'The context prefix gives you vin and date range to filter on. ' +
-  'Use vin field for VIN filter and process_date for date range in vt_overall_data.';
+  'You are the Ravity Vehicle Digital Twin SQL Intelligence Agent for Maruti Suzuki. You MUST ONLY query these two collections: (1) synthetic_data_kpi — fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, idle_time, process_date, trip_id, trip_start_time, trip_end_time, altitude_median, gsm_strength_per, odometerresetcount, fueladulteration, ac_usage_duration, ac_usage_frequency, speed_distribution_0_20_kmh, speed_distribution_20_60_kmh, speed_distribution_60_80_kmh, speed_distribution_80_100_kmh, speed_distribution_100_120_kmh, speed_distribution_120_140_kmh. (2) qac_kpi_baseline_data — fleet baseline averages with same vin field. NEVER query any other collection — only these two are accessible. Always filter using the vin field and process_date field from synthetic_data_kpi.';
 const INITIAL_SUGGESTIONS = [
   'Show harsh acceleration, braking and overspeeding counts for this VIN',
-  'What is the vehicle model, variant and fuel type for this VIN?',
-  'Show all DTC fault codes for this vehicle',
-  'What is the total distance, trips and fuel efficiency for this VIN?',
+  'What is the fuel efficiency and total distance for this VIN?',
+  'Show speed distribution across all speed bands for this VIN',
+  'Compare harsh events and fuel efficiency against fleet baseline',
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -499,13 +475,12 @@ const AiAnalysisDashboard: React.FC = () => {
     const text = (overrideText ?? inputText).trim();
     if (!text || loading) return;
 
-    // Inject context as explicit SQL instructions, not bracket notation
-    // Bracket notation was being treated as a filter by the SQL agent
-    const vinFilter = vin ? `Filter results to vin = '${vin}'. ` : '';
-    const dateFilter = apiParams.startdate
-      ? `Use process_date between '${apiParams.startdate}' and '${apiParams.enddate}'. `
+    // Context injected as natural language that maps directly to synthetic_data_kpi fields
+    const vinPart  = vin ? ` for vin '${vin}'` : ' across all vehicles';
+    const datePart = apiParams.startdate
+      ? ` where process_date is between '${apiParams.startdate}' and '${apiParams.enddate}'`
       : '';
-    const contextualText = `${vinFilter}${dateFilter}${text}`;
+    const contextualText = `${text}${vinPart}${datePart}`;
 
     setInputText('');
     setMessages(prev => [...prev, {
