@@ -3,18 +3,22 @@ import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
 
-// ─── BizWiz Config — hardcoded to match working curl 1 exactly ───────────────
-// These values are fixed for the VDTSIA assistant on space 5129.
-// authtoken is session-based and must be provided by the user (expires).
+// ─── BizWiz Config — exact values from working curl ──────────────────────────
+// URL:       platform.ravity.io/cxf/bizvizllm/llmService  (proxied via /bizviz-proxy/)
+// Space:     5129
+// UserID:    1217690654
+// AssistId:  3514581148  (VDTSIA — Vehicle Digital Twin SQL Intelligence Agent)
+// Connector: 238893540
+// Tables:    synthetic_data_kpi, qac_kpi_baseline_data
+// authtoken: session-based, sourced from Redux token (expires per session)
 const BIZVIZ_ENDPOINT    = '/bizviz-proxy/llmService';
-const BIZVIZ_SPACE_KEY   = '5129';         // fixed — matches curl 1
-const BIZVIZ_USER_ID     = '1217690654';   // fixed — matches curl 1
-const BIZVIZ_ASSIST_ID   = '3514581148';   // fixed — matches curl 1
-const BIZVIZ_CONNECTOR   = '238893540';    // fixed — matches curl 1
+const BIZVIZ_SPACE_KEY   = '5129';
+const BIZVIZ_USER_ID     = '1217690654';
+const BIZVIZ_ASSIST_ID   = '3514581148';
+const BIZVIZ_CONNECTOR   = '238893540';
 const BIZVIZ_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
 const BIZVIZ_DESCRIPTION =
   'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
-
 const INITIAL_SUGGESTIONS = [
   'How many harsh acceleration events per VIN?',
   'Show fuel efficiency trend for this vehicle',
