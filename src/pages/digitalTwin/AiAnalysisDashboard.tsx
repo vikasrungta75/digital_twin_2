@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
@@ -13,16 +13,77 @@ const DT_ASSIST_ID   = '3514581148';
 const DT_CONNECTOR   = '238893540';
 const DT_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
 // Short description — same length/style as fleet copilot
-const DT_DESCRIPTION = 'I am the Vehicle Digital Twin Intelligence Agent for Maruti Suzuki, ' +
-  'an intelligent assistant that analyses vehicle telematics data including harsh driving events, ' +
-  'fuel efficiency, speed distribution, CO2 emissions, DTC faults, and fleet benchmarks ' +
-  'from the Ravity Digital Twin platform.';
+// Exact description from working curl — must match BizWiz assistant 3514581148 config
+const DT_DESCRIPTION = 'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
 
 interface HistoryItem {
   context: string;
   session_id: string;
   last_activity?: string;
 }
+
+
+// ─── Inline SVG Bar Chart ─────────────────────────────────────────────────────
+const BarChart: React.FC<{ data: any[]; xKey: string; yKey: string; title?: string }> = ({ data, xKey, yKey, title }) => {
+  const MAX   = 20;
+  const rows  = data.slice(0, MAX);
+  const vals  = rows.map(r => Number(r[yKey] ?? 0));
+  const maxV  = Math.max(...vals, 1);
+  const BAR_W = 36;
+  const GAP   = 8;
+  const H     = 160;
+  const LBL_H = 44;
+  const W     = rows.length * (BAR_W + GAP);
+
+  const fmt = (n: number) => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
+  const lbl = (s: any) => { const str = String(s ?? ''); return str.length > 8 ? '…'+str.slice(-6) : str; };
+
+  return (
+    <div style={{ marginTop:16, background:'#fff', borderRadius:12, padding:'16px 16px 8px', border:'1px solid #e8e8e8', boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+      {title && <div style={{ fontSize:12, fontWeight:700, color:'#e91e8c', marginBottom:10, textTransform:'uppercase', letterSpacing:0.5 }}>{title}</div>}
+      <div style={{ overflowX:'auto' }}>
+        <svg viewBox={`0 0 ${Math.max(W,300)} ${H+LBL_H}`}
+          style={{ display:'block', minWidth:Math.max(W,300), height:H+LBL_H, width:'100%' }}>
+          {[0,0.25,0.5,0.75,1].map((f,i) => (
+            <g key={i}>
+              <line x1={0} y1={H - f*H} x2={W} y2={H - f*H}
+                stroke={f===0?'#ccc':'#eee'} strokeWidth={f===0?1:0.7} strokeDasharray={f===0?'':'4,4'}/>
+              <text x={2} y={H - f*H - 3} fill="#aaa" fontSize={9}>{fmt(f*maxV)}</text>
+            </g>
+          ))}
+          {rows.map((row, i) => {
+            const val  = vals[i];
+            const barH = Math.max((val/maxV)*H, 2);
+            const x    = i*(BAR_W+GAP);
+            const y    = H - barH;
+            const hue  = 330;
+            const sat  = 60 + (i%3)*8;
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={BAR_W} height={barH}
+                  fill={`hsl(${hue},${sat}%,55%)`} rx={4} opacity={0.9}>
+                  <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
+                </rect>
+                <text x={x+BAR_W/2} y={y-4} textAnchor="middle" fill="#555" fontSize={8} fontWeight="600">
+                  {fmt(val)}
+                </text>
+                <text x={x+BAR_W/2} y={H+14} textAnchor="middle" fill="#888" fontSize={8}
+                  transform={`rotate(-35,${x+BAR_W/2},${H+14})`}>
+                  {lbl(row[xKey])}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      {data.length > MAX && (
+        <div style={{ fontSize:11, color:'#aaa', marginTop:4, textAlign:'center' }}>
+          Showing first {MAX} of {data.length} records
+        </div>
+      )}
+    </div>
+  );
+};
 
 const AiAnalysisDashboard = () => {
   const { vin, apiParams } = useDt();
@@ -125,7 +186,8 @@ const AiAnalysisDashboard = () => {
         const { tableHTML, suggestionList } = buildResponseParts(finalParsed);
         const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed);
 
-        return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList };
+        const chartConfig = buildResponseParts && extractChart ? extractChart(finalParsed) : null;
+        return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList, chart: chartConfig };
       });
 
       setResponses(parsedResponses);
@@ -160,16 +222,16 @@ const AiAnalysisDashboard = () => {
     const keys = Object.keys(parsedData[0]);
     const headers = keys.map(k => {
       const formatted = k.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      return `<th style="padding:6px; border:1px solid #2a2a38; text-align:left; color:#9090b0; background:#1f1f2e; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">${formatted}</th>`;
+      return `<th style="padding:6px; border:1px solid #dde; text-align:left; color:#555577; background:#f5f5ff; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">${formatted}</th>`;
     }).join('');
     const rows = parsedData.map(row =>
-      `<tr style="border-bottom:1px solid #1a1a28;">${keys.map(k =>
-        `<td style="padding:8px 13px; color:#c0c0e0; font-size:13px;">${row[k] ?? '—'}</td>`
+      `<tr style="border-bottom:1px solid #eef;">${keys.map(k =>
+        `<td style="padding:8px 13px; color:#333344; font-size:13px;">${row[k] ?? '—'}</td>`
       ).join('')}</tr>`
     ).join('');
-    return `<div style="margin-top:14px; overflow-x:auto; border-radius:10px; border:1px solid #2a2a38;">
+    return `<div style="margin-top:14px; overflow-x:auto; border-radius:10px; border:1px solid #dde;">
       <table style="border-collapse:collapse; width:100%; font-size:13px;">
-        <thead><tr style="background:#1f1f2e;">${headers}</tr></thead>
+        <thead><tr style="background:#f5f5ff;">${headers}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
   };
@@ -190,12 +252,23 @@ const AiAnalysisDashboard = () => {
 
   const buildHtmlResponse = (tableHTML: string, parsedResponse: any): string => {
     const viz = parsedResponse?.visualization || {};
-    return `<div style="font-family: sans-serif; line-height: 1.7; color: #c0c0e0;">
+    return `<div style="font-family: sans-serif; line-height: 1.7; color: #333;">
       ${tableHTML}
       ${viz.Answer   || viz.answer   || ''}
       ${viz.Analysis || viz.analysis || ''}
-      ${parsedResponse?.explanation ? `<p style="color:#9090b0; font-style:italic; font-size:13px;">${parsedResponse.explanation}</p>` : ''}
+      ${parsedResponse?.explanation ? `<p style="color:#555577; font-style:italic; font-size:13px;">${parsedResponse.explanation}</p>` : ''}
     </div>`;
+  };
+
+  // Extract chart config from parsed response for rendering
+  const extractChart = (parsedResponse: any): { data: any[]; xKey: string; yKey: string; title: string } | null => {
+    const rows = safeParseData(parsedResponse?.data);
+    const viz  = parsedResponse?.visualization || {};
+    if (!rows.length) return null;
+    const xKey = viz.x_axis || Object.keys(rows[0])[0];
+    const yKey = viz.y_axis || Object.keys(rows[0])[1];
+    if (!yKey || !rows.some((r: any) => typeof r[yKey] === 'number')) return null;
+    return { data: rows, xKey, yKey, title: viz.chart_title || '' };
   };
 
   // ── handleSend — modelled exactly on fleet copilot ───────────────────────────
@@ -214,14 +287,16 @@ const AiAnalysisDashboard = () => {
       const spaceKey = user?.user?.spaceKey;
       const authToken = token;
 
-      // Headers identical to fleet copilot + cache-control
+      // Headers must match the working curl from platform.ravity.io/newGenAi/
+      // origin and referer are set to platform.ravity.io — BizWiz may validate these
       const headers: Record<string, string> = {
         accept:           'application/json, text/plain, */*',
         'content-type':   'application/x-www-form-urlencoded',
         authtoken:        authToken,
         spacekey:         spaceKey,
         userid:           String(userId),
-        'cache-control':  'no-cache',
+        origin:           'https://platform.ravity.io',
+        referer:          'https://platform.ravity.io/newGenAi/',
       };
 
       const bodyData = new URLSearchParams({
@@ -284,10 +359,12 @@ const AiAnalysisDashboard = () => {
         cleanedResponse = data.response || 'No response available';
       }
 
+      const chartConfig = parsedResponse && !parsedResponse.html ? extractChart(parsedResponse) : null;
       setResponses(prev => [...prev, {
         question:     data.original_text || textToSend,
         htmlResponse: cleanedResponse,
         suggestions:  suggestionList,
+        chart:        chartConfig,
       }]);
 
       // Ingestion — fire and forget, same as fleet copilot
@@ -358,10 +435,10 @@ const AiAnalysisDashboard = () => {
   // ── Initial suggestions — include VIN naturally so agent knows context ────────
   const vinDisplay = vin ? vin.slice(-8) : 'selected VIN';
   const initSuggestions = [
-    `How many harsh acceleration, braking and overspeeding events for VIN ${vin || '027a07bca0c239ca'}?`,
-    `What is the fuel efficiency and total distance for VIN ${vin || '027a07bca0c239ca'}?`,
-    `Show speed distribution for VIN ${vin || '027a07bca0c239ca'}`,
-    `Compare VIN ${vin || '027a07bca0c239ca'} against the fleet baseline for all KPIs`,
+    'How many harsh acceleration events per VIN?',
+    'Show fuel efficiency and total distance per VIN',
+    'Which VINs have the highest overspeeding events?',
+    'Show CO2 emissions per VIN ranked highest to lowest',
   ];
 
   return (
@@ -375,30 +452,30 @@ const AiAnalysisDashboard = () => {
         @keyframes dtBounce { 0%,100%{opacity:.2;transform:scale(.85)} 50%{opacity:1;transform:scale(1.1)} }
       `}</style>
 
-      <div style={{ display:'flex', height:'calc(100vh - 72px)', fontFamily:'Arial, sans-serif', background:'#0f0f13' }}>
+      <div style={{ display:'flex', height:'calc(100vh - 72px)', fontFamily:'Arial, sans-serif', background:'#f5f7fa' }}>
 
         {/* ── Sidebar ── */}
         <div style={{
           width: historyOpen ? 260 : 60, minWidth: historyOpen ? 260 : 60,
-          background:'#17171f', borderRight:'1px solid #2a2a38',
+          background:'#f8f9fa', borderRight:'1px solid #e8e8e8',
           display:'flex', flexDirection:'column', transition:'width 0.25s', overflow:'hidden',
         }}>
           {/* New chat */}
           <div onClick={() => { setInputText(''); setResponses([]); setSelectedSuggestion(''); }}
-            style={{ padding:'14px 16px', borderBottom:'1px solid #2a2a38', fontWeight:600,
-              cursor:'pointer', color:'#9090b0', display:'flex', alignItems:'center', gap:10,
+            style={{ padding:'14px 16px', borderBottom:'1px solid #e0e0e0', fontWeight:600,
+              cursor:'pointer', color:'#666688', display:'flex', alignItems:'center', gap:10,
               whiteSpace:'nowrap', fontSize:13 }}
-            onMouseEnter={e => (e.currentTarget.style.background='#1f1f2e')}
+            onMouseEnter={e => (e.currentTarget.style.background='#f0f4ff')}
             onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
             💬 {historyOpen && 'New chat'}
           </div>
 
           {/* History toggle */}
           <div onClick={() => setHistoryOpen(p => !p)}
-            style={{ padding:'14px 16px', borderBottom:'1px solid #2a2a38', fontWeight:600,
-              cursor:'pointer', color:'#9090b0', display:'flex', alignItems:'center', gap:10,
+            style={{ padding:'14px 16px', borderBottom:'1px solid #e0e0e0', fontWeight:600,
+              cursor:'pointer', color:'#666688', display:'flex', alignItems:'center', gap:10,
               whiteSpace:'nowrap', fontSize:13 }}
-            onMouseEnter={e => (e.currentTarget.style.background='#1f1f2e')}
+            onMouseEnter={e => (e.currentTarget.style.background='#f0f4ff')}
             onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
             🕑 {historyOpen && 'History'}
           </div>
@@ -407,7 +484,7 @@ const AiAnalysisDashboard = () => {
             <ul style={{ listStyle:'none', margin:0, padding:8, overflowY:'auto',
               flex:1, scrollbarWidth:'thin' }}>
               {questionHistory.length === 0 && (
-                <li style={{ padding:'12px 10px', color:'#404060', fontSize:12 }}>
+                <li style={{ padding:'12px 10px', color:'#aaa', fontSize:12 }}>
                   No previous conversations
                 </li>
               )}
@@ -415,8 +492,8 @@ const AiAnalysisDashboard = () => {
                 <li key={idx} style={{
                   display:'flex', alignItems:'center', justifyContent:'space-between',
                   padding:'9px 10px', borderRadius:8, marginBottom:2,
-                  cursor:'pointer', color:'#8080a0', fontSize:12, transition:'all 0.15s',
-                  ...(hoveredIndex1 === idx ? { background:'#1f1f2e', color:'#e0e0f0' } : {}),
+                  cursor:'pointer', color:'#777799', fontSize:12, transition:'all 0.15s',
+                  ...(hoveredIndex1 === idx ? { background:'#f0f4ff', color:'#1a1a2e' } : {}),
                 }}
                   onMouseEnter={() => setHoveredIndex1(idx)}
                   onMouseLeave={() => setHoveredIndex1(null)}>
@@ -446,18 +523,18 @@ const AiAnalysisDashboard = () => {
         <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
           {/* Context bar + date filter */}
-          <div style={{ display:'flex', alignItems:'center', background:'#13131b',
-            borderBottom:'1px solid #1e1e2a', flexShrink:0, flexWrap:'wrap' }}>
+          <div style={{ display:'flex', alignItems:'center', background:'#ffffff',
+            borderBottom:'1px solid #e8e8e8', flexShrink:0, flexWrap:'wrap' }}>
             {[
               { label:'VIN',  value: vin || 'not selected', pink: !!vin },
               { label:'From', value: apiParams.startdate,   pink: true },
               { label:'To',   value: apiParams.enddate,     pink: true },
             ].map(p => (
               <div key={p.label} style={{ display:'flex', alignItems:'center', gap:7,
-                padding:'10px 18px', fontSize:12, borderRight:'1px solid #1e1e2a' }}>
-                <span style={{ color:'#404060', textTransform:'uppercase', letterSpacing:'0.6px',
+                padding:'10px 18px', fontSize:12, borderRight:'1px solid #e8e8e8' }}>
+                <span style={{ color:'#aaa', textTransform:'uppercase', letterSpacing:'0.6px',
                   fontSize:10, fontWeight:600 }}>{p.label}</span>
-                <span style={{ color: p.pink ? '#e91e8c' : '#404060', fontFamily:'monospace',
+                <span style={{ color: p.pink ? '#e91e8c' : '#aaa', fontFamily:'monospace',
                   fontSize:12, maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                   {p.value}
                 </span>
@@ -474,18 +551,18 @@ const AiAnalysisDashboard = () => {
               justifyContent:'center', padding:'40px 32px', textAlign:'center', overflowY:'auto' }}>
               <div style={{ width:54, height:54, borderRadius:16, background:'linear-gradient(135deg,#e91e8c,#c2185b)',
                 display:'flex', alignItems:'center', justifyContent:'center', fontSize:26,
-                margin:'0 auto 18px', boxShadow:'0 8px 32px #e91e8c44' }}>🤖</div>
-              <h2 style={{ color:'#e0e0f0', fontSize:22, fontWeight:700, margin:'0 0 10px' }}>
+                margin:'0 auto 18px', boxShadow:'0 4px 20px rgba(233,30,140,0.25)' }}>🤖</div>
+              <h2 style={{ color:'#1a1a2e', fontSize:22, fontWeight:700, margin:'0 0 10px' }}>
                 Hey {user?.user?.fullName?.split(' ')[0] || 'there'}, How may I assist you today?
               </h2>
-              <p style={{ color:'#6060a0', fontSize:14, margin:'0 0 16px', maxWidth:440, lineHeight:1.7 }}>
-                Ask me anything about vehicle telematics — harsh events, fuel efficiency, speed,
-                CO₂ emissions or fleet comparisons. Include the VIN in your question for specific results.
+              <p style={{ color:'#666688', fontSize:14, margin:'0 0 16px', maxWidth:440, lineHeight:1.7 }}>
+                Ask me anything about the vehicle telematics data — harsh driving events, 
+                fuel efficiency, speed distribution, CO₂ emissions or fleet-wide comparisons.
               </p>
               {vin && (
-                <div style={{ display:'inline-flex', alignItems:'center', gap:8, background:'#1f1f2e',
-                  border:'1px solid #2a2a38', borderRadius:20, padding:'7px 16px', fontSize:12,
-                  color:'#9090b0', marginBottom:24 }}>
+                <div style={{ display:'inline-flex', alignItems:'center', gap:8, background:'#f0f4ff',
+                  border:'1px solid #e0e0e0', borderRadius:20, padding:'7px 16px', fontSize:12,
+                  color:'#666688', marginBottom:24 }}>
                   <span>Active VIN:</span>
                   <strong style={{ color:'#e91e8c', fontFamily:'monospace' }}>{vin}</strong>
                   <span>·</span>
@@ -496,8 +573,8 @@ const AiAnalysisDashboard = () => {
                 {initSuggestions.map((q, i) => (
                   <button key={i}
                     style={{
-                      background: hoveredIndex === i ? '#1f1f2e' : '#17171f',
-                      border: `1px solid ${hoveredIndex === i ? '#e91e8c55' : '#2a2a38'}`,
+                      background: hoveredIndex === i ? '#f0f4ff' : '#ffffff',
+                      border: `1px solid ${hoveredIndex === i ? '#e91e8c55' : '#e0e0e0'}`,
                       borderRadius:12, padding:'14px 16px', cursor:'pointer', textAlign:'left',
                       color: hoveredIndex === i ? '#e0e0f0' : '#8080a0', fontSize:13, lineHeight:1.5,
                       transition:'all 0.2s', fontFamily:'inherit',
@@ -529,8 +606,8 @@ const AiAnalysisDashboard = () => {
 
                   {/* AI bubble */}
                   {res.error ? (
-                    <div style={{ background:'#1a1015', border:'1px solid #ff4d4d44',
-                      color:'#ff8080', padding:'14px 18px', borderRadius:'4px 18px 18px 18px',
+                    <div style={{ background:'#fff5f5', border:'1px solid #ffcccc',
+                      color:'#cc2222', padding:'14px 18px', borderRadius:'4px 18px 18px 18px',
                       fontSize:14 }}>
                       {res.error}
                     </div>
@@ -541,17 +618,28 @@ const AiAnalysisDashboard = () => {
                         display:'flex', alignItems:'center', justifyContent:'center',
                         fontSize:14, boxShadow:'0 2px 8px #e91e8c40' }}>🤖</div>
                       <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ background:'#17171f', border:'1px solid #2a2a38',
-                          padding:'16px 20px', borderRadius:'4px 18px 18px 18px',
-                          fontSize:14, lineHeight:1.8, maxWidth:'100%' }}
-                          dangerouslySetInnerHTML={{ __html: res.htmlResponse }} />
+                        <div>
+                          {res.chart && (
+                            <BarChart
+                              data={res.chart.data}
+                              xKey={res.chart.xKey}
+                              yKey={res.chart.yKey}
+                              title={res.chart.title}
+                            />
+                          )}
+                          <div style={{ background:'#fff', border:'1px solid #e8e8e8',
+                            padding:'16px 20px', borderRadius:res.chart ? '0 0 12px 12px' : '4px 18px 18px 18px',
+                            fontSize:14, lineHeight:1.8, maxWidth:'100%',
+                            borderTop: res.chart ? 'none' : undefined }}
+                            dangerouslySetInnerHTML={{ __html: res.htmlResponse }} />
+                        </div>
                         {res.suggestions?.length > 0 && (
                           <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:10 }}>
                             {res.suggestions.map((s: string, i: number) => (
                               <button key={i}
                                 style={{
-                                  background: hoveredIndex2 === i ? '#1f1f2e' : '#1a1a28',
-                                  border: `1px solid ${hoveredIndex2 === i ? '#e91e8c55' : '#2a2a38'}`,
+                                  background: hoveredIndex2 === i ? '#f0f4ff' : '#f0f0f8',
+                                  border: `1px solid ${hoveredIndex2 === i ? '#e91e8c55' : '#e0e0e0'}`,
                                   color: hoveredIndex2 === i ? '#e0e0f0' : '#8080b0',
                                   padding:'7px 14px', borderRadius:20, fontSize:12,
                                   cursor:'pointer', transition:'all 0.2s', fontFamily:'inherit',
@@ -577,7 +665,7 @@ const AiAnalysisDashboard = () => {
                   <div style={{ width:32, height:32, borderRadius:10, flexShrink:0,
                     background:'linear-gradient(135deg,#e91e8c,#c2185b)',
                     display:'flex', alignItems:'center', justifyContent:'center', fontSize:14 }}>🤖</div>
-                  <div style={{ background:'#17171f', border:'1px solid #2a2a38',
+                  <div style={{ background:'#ffffff', border:'1px solid #e0e0e0',
                     padding:'14px 18px', borderRadius:'4px 18px 18px 18px' }}>
                     <span className="dt-typing"><span/><span/><span/></span>
                   </div>
@@ -587,13 +675,13 @@ const AiAnalysisDashboard = () => {
               {/* Inline suggestions after last message */}
               {!loading && responses.length > 0 && !responses[responses.length - 1]?.suggestions?.length && (
                 <div style={{ display:'flex', flexWrap:'wrap', gap:10, justifyContent:'center',
-                  padding:'12px 0', borderTop:'1px solid #1e1e2a' }}>
+                  padding:'12px 0', borderTop:'1px solid #e8e8e8' }}>
                   {initSuggestions.map((question, index) => (
                     <button key={index}
                       style={{
                         padding:'7px 14px', borderRadius:20,
-                        border: `1px solid ${hoveredIndex === index ? '#e91e8c55' : '#2a2a38'}`,
-                        background: hoveredIndex === index ? '#1f1f2e' : '#17171f',
+                        border: `1px solid ${hoveredIndex === index ? '#e91e8c55' : '#e0e0e0'}`,
+                        background: hoveredIndex === index ? '#f0f4ff' : '#ffffff',
                         cursor:'pointer', fontSize:12, transition:'all 0.2s ease',
                         color: hoveredIndex === index ? '#e0e0f0' : '#8080a0',
                         fontFamily:'inherit',
@@ -612,26 +700,26 @@ const AiAnalysisDashboard = () => {
           )}
 
           {/* Input bar */}
-          <div style={{ display:'flex', padding:'12px 20px', borderTop:'1px solid #1e1e2a',
-            background:'#13131b', gap:10, alignItems:'center' }}>
-            <div style={{ flex:1, display:'flex', alignItems:'center', background:'#17171f',
-              border:'1.5px solid #2a2a38', borderRadius:14, padding:'4px 4px 4px 16px',
+          <div style={{ display:'flex', padding:'12px 20px', borderTop:'1px solid #e8e8e8',
+            background:'#ffffff', gap:10, alignItems:'center' }}>
+            <div style={{ flex:1, display:'flex', alignItems:'center', background:'#ffffff',
+              border:'1.5px solid #d0d0d0', borderRadius:14, padding:'4px 4px 4px 16px',
               transition:'border-color 0.2s' }}
               onFocus={() => {}} >
               <input
                 type="text"
-                placeholder={vin ? `Ask about VIN ${vinDisplay}… (include VIN in your question for specific data)` : 'Ask anything about vehicle telematics...'}
+                placeholder='Ask anything about vehicle telematics — harsh events, fuel efficiency, speed, CO2...'
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSend()}
                 style={{ flex:1, background:'none', border:'none', outline:'none',
-                  color:'#e0e0f0', fontSize:14, padding:'8px 0', fontFamily:'inherit' }}
+                  color:'#1a1a2e', fontSize:14, padding:'8px 0', fontFamily:'inherit' }}
               />
             </div>
             <button onClick={() => handleSend()}
               disabled={loading || !inputText.trim()}
               style={{ width:42, height:42, borderRadius:10, flexShrink:0,
-                background: (loading || !inputText.trim()) ? '#2a2a38' : 'linear-gradient(135deg,#e91e8c,#c2185b)',
+                background: (loading || !inputText.trim()) ? '#e0e0e0' : 'linear-gradient(135deg,#e91e8c,#c2185b)',
                 border:'none', cursor: (loading || !inputText.trim()) ? 'not-allowed' : 'pointer',
                 display:'flex', alignItems:'center', justifyContent:'center',
                 color:'#fff', fontSize:16, transition:'all 0.2s',
@@ -643,8 +731,8 @@ const AiAnalysisDashboard = () => {
                 : '➤'}
             </button>
           </div>
-          <div style={{ textAlign:'center', fontSize:11, color:'#2a2a48', paddingBottom:8 }}>
-            Include the VIN number in your question to get vehicle-specific results
+          <div style={{ textAlign:'center', fontSize:11, color:'#bbb', paddingBottom:8 }}>
+            Ask fleet-wide questions for best results — e.g. 'harsh acceleration per VIN'
           </div>
         </div>
       </div>
