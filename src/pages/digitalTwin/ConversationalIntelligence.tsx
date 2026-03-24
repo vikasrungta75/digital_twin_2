@@ -771,12 +771,18 @@ const AiAnalysisDashboard = () => {
         ...prev,
       ]);
 
-      const userId   = user?.user?.id || user?.user?.userId;
-      const spaceKey = user?.user?.spaceKey;
+      const userId    = user?.user?.id || user?.user?.userId;
+      const spaceKey  = user?.user?.spaceKey;
       const authToken = token;
 
-      // Headers must match the working curl from platform.ravity.io/newGenAi/
-      // origin and referer are set to platform.ravity.io — BizWiz may validate these
+      if (!userId || !authToken) {
+        setResponses(prev => [...prev, {
+          question: textToSend,
+          error: 'Authentication required — please log in again.',
+        }]);
+        return;
+      }
+
       const headers: Record<string, string> = {
         accept:           'application/json, text/plain, */*',
         'content-type':   'application/x-www-form-urlencoded',
@@ -787,44 +793,50 @@ const AiAnalysisDashboard = () => {
         referer:          'https://platform.ravity.io/newGenAi/',
       };
 
+      // IMPORTANT: tables and selected_files must be serialised as JSON strings
+      // inside the data payload — URLSearchParams would otherwise flatten arrays
+      const innerData = {
+        text:             textToSend,
+        userID:           String(userId),
+        sessionID:        sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        assistId:         DT_ASSIST_ID,
+        connector:        DT_CONNECTOR,
+        description:      DT_DESCRIPTION,
+        tables:           DT_TABLES,          // kept as array — JSON.stringify below
+        selected_files:   [],
+        type:             'connector',
+        documentStoreIds: DT_TABLES,
+        spaceKey:         spaceKey,
+      };
+
       const bodyData = new URLSearchParams({
         serviceType: 'process_text',
-        data: JSON.stringify({
-          text:             textToSend,   // RAW — no modification, same as fleet copilot
-          userID:           String(userId),
-          sessionID:        sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-          assistId:         DT_ASSIST_ID,
-          connector:        DT_CONNECTOR,
-          description:      DT_DESCRIPTION,
-          tables:           DT_TABLES,
-          selected_files:   [],
-          type:             'connector',
-          documentStoreIds: DT_TABLES,
-          spaceKey:         spaceKey,
-        }),
-        spacekey: spaceKey,
+        data:        JSON.stringify(innerData),
+        spacekey:    spaceKey,
       });
 
       const response = await fetch(BIZVIZ_URL, { method: 'POST', headers, body: bodyData });
 
       if (!response.ok) {
         const errText = await response.text();
-        console.error('BizWiz error:', errText);
+        console.error('BizWiz error:', response.status, errText);
         setResponses(prev => [...prev, {
           question: textToSend,
-          error: `Server returned ${response.status}: ${errText.slice(0, 200)}`,
+          error: `API error ${response.status}: ${errText.slice(0, 300) || 'No details returned — check network & proxy config.'}`,
         }]);
         return;
       }
 
-      const data = await response.json();
+      const rawData = await response.json();
 
-      // Parse response — same pattern as fleet copilot
+      // Normalise: BizWiz sometimes wraps in {response:"…"}, sometimes returns object directly
       let parsedResponse: any;
-      try {
-        parsedResponse = JSON.parse(data.response);
-      } catch {
-        parsedResponse = { html: data.response };
+      const responseField = rawData?.response ?? rawData;
+      if (typeof responseField === 'string') {
+        try { parsedResponse = JSON.parse(responseField); }
+        catch { parsedResponse = { html: responseField }; }
+      } else {
+        parsedResponse = responseField;
       }
 
       let cleanedResponse = '';
@@ -832,57 +844,58 @@ const AiAnalysisDashboard = () => {
 
       try {
         if (parsedResponse && !parsedResponse.html) {
-          delete parsedResponse.query;
-          delete parsedResponse.dashboards;
-          delete parsedResponse.data_refreshed_at;
+          // Remove fields that should not be surfaced to the user
+          const display = { ...parsedResponse };
+          delete display.query;
+          delete display.dashboards;
+          delete display.data_refreshed_at;
 
-          const { tableHTML, suggestionList: suggs } = buildResponseParts(parsedResponse);
+          const { tableHTML, suggestionList: suggs } = buildResponseParts(display);
           suggestionList = suggs;
-          const hasChrt = !!extractChart(parsedResponse);
-          cleanedResponse = buildHtmlResponse(tableHTML, parsedResponse, hasChrt);
+          const hasChrt = !!extractChart(display);
+          cleanedResponse = buildHtmlResponse(tableHTML, display, hasChrt);
         } else {
-          cleanedResponse = parsedResponse?.html || 'No response available';
+          cleanedResponse = parsedResponse?.html || String(responseField) || 'No response received.';
         }
       } catch (err) {
         console.warn('Response handling failed — fallback to raw string', err);
-        cleanedResponse = data.response || 'No response available';
+        cleanedResponse = String(rawData?.response || rawData || 'No response available');
       }
 
       const chartConfig2 = parsedResponse && !parsedResponse.html ? extractChart(parsedResponse) : null;
       setResponses(prev => [...prev, {
-        question:     data.original_text || textToSend,
+        question:     rawData.original_text || textToSend,
         htmlResponse: cleanedResponse,
         suggestions:  suggestionList,
         chart:        chartConfig2,
       }]);
 
-      // Ingestion — fire and forget, same as fleet copilot
-      try {
-        await fetch('/ingestion-proxy/ingestion/dataIngestion', {
-          method:  'POST',
-          headers: {
-            'Content-Type':  'application/json',
-            IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
-            IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
-          },
-          body: JSON.stringify({
-            question:   textToSend,
-            response:   JSON.stringify(data),
-            user_id:    userId,
-            action:     'add',
-            session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-            spacekey:   spaceKey,
-            user_name:  user?.user?.fullName || 'Unknown_User',
-            user_email: user?.user?.emailID  || 'unknown@ravity.io',
-          }),
-        });
-      } catch (ingErr) {
-        console.error('Ingestion error:', ingErr);
-      }
+      // Ingestion — fire and forget
+      fetch('/ingestion-proxy/ingestion/dataIngestion', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
+          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
+        },
+        body: JSON.stringify({
+          question:   textToSend,
+          response:   JSON.stringify(rawData),
+          user_id:    userId,
+          action:     'add',
+          session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          spacekey:   spaceKey,
+          user_name:  user?.user?.fullName  || 'Unknown_User',
+          user_email: user?.user?.emailID   || 'unknown@ravity.io',
+        }),
+      }).catch(ingErr => console.error('Ingestion error:', ingErr));
 
-    } catch (error) {
-      console.error('Error:', error);
-      setResponses(prev => [...prev, { question: inputText, error: 'Something went wrong!' }]);
+    } catch (error: any) {
+      console.error('handleSend error:', error);
+      setResponses(prev => [...prev, {
+        question: textToSend,
+        error: `Request failed: ${error?.message || 'Unknown error'}`,
+      }]);
     } finally {
       setLoading(false);
       setInputText('');
@@ -941,7 +954,14 @@ const AiAnalysisDashboard = () => {
         @keyframes dtBounce { 0%,100%{opacity:.2;transform:scale(.85)} 50%{opacity:1;transform:scale(1.1)} }
       `}</style>
 
-      <div style={{ display:'flex', height:'calc(100vh - 72px)', fontFamily:'Arial, sans-serif', background:'#f5f7fa' }}>
+      <div style={{
+        display:'flex', flexDirection:'column',
+        // 72px = app header, 68px = our page header bar we added, 1px = border
+        height:'calc(100vh - 141px)',
+        width:'100%', minWidth:0,
+        fontFamily:'Arial, sans-serif', background:'#f5f7fa',
+        overflow:'hidden',
+      }}><div style={{ display:'flex', flex:1, minHeight:0, overflow:'hidden' }}>
 
         {/* ── Sidebar ── */}
         <div style={{
@@ -1251,7 +1271,7 @@ const AiAnalysisDashboard = () => {
             Ask fleet-wide questions for best results — e.g. 'harsh acceleration per VIN'
           </div>
         </div>
-      </div>
+      </div></div>
     </>
   );
 };

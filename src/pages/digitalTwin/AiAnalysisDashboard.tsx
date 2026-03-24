@@ -1,4 +1,4 @@
-import React, { FC, useCallback, useState } from 'react';
+import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import {
   fetchVehicleInfo, fetchVehicleUsage, fetchOverallData,
@@ -397,19 +397,43 @@ const sevStyle = (s: AnalysisSection['severity']) => ({
 const AiAnalysisDashboard: FC = () => {
   const { vin, apiParams } = useDt();
 
-  // Provider state
-  const [provider,   setProvider]   = useState<Provider>('openai');
+  // ── Restore saved keys from localStorage so users don't re-enter every session
+  const savedKeys = (() => {
+    try { return JSON.parse(localStorage.getItem('dt_ai_keys') || '{}'); } catch { return {}; }
+  })();
+  const savedProvider = (localStorage.getItem('dt_ai_provider') as Provider | null) || 'gemini';
+  const savedModels = (() => {
+    try { return JSON.parse(localStorage.getItem('dt_ai_models') || '{}'); } catch { return {}; }
+  })();
+
+  // Provider state — default to Gemini (free tier); never read OPENAI env key to avoid
+  // shipping demo/placeholder keys that cause 401 errors
+  const [provider,   setProvider]   = useState<Provider>(savedProvider);
   const [keys,       setKeys]       = useState<Record<Provider, string>>({
-    gemini:  process.env.REACT_APP_GEMINI_KEY || '',
-    claude:  '',
-    openai:  process.env.REACT_APP_OPENAI_KEY || '',
+    gemini:  savedKeys.gemini  || process.env.REACT_APP_GEMINI_KEY  || '',
+    claude:  savedKeys.claude  || '',
+    openai:  savedKeys.openai  || '',   // never fall back to REACT_APP_OPENAI_KEY
   });
   const [models,     setModels]     = useState<Record<Provider, string>>({
-    gemini: 'gemini-2.5-flash-preview-04-17',
-    claude: 'claude-sonnet-4-5',
-    openai: 'gpt-4o-mini',
+    gemini: savedModels.gemini || 'gemini-2.5-flash-preview-04-17',
+    claude: savedModels.claude || 'claude-sonnet-4-5',
+    openai: savedModels.openai || 'gpt-4o-mini',
   });
   const [showKeys, setShowKeys]     = useState<Record<Provider, boolean>>({ gemini: false, claude: false, openai: false });
+
+  // Persist provider + keys + models on every change
+  useEffect(() => { localStorage.setItem('dt_ai_provider', provider); }, [provider]);
+  useEffect(() => {
+    // Never persist a key that looks like a demo/placeholder
+    const toSave: Record<string, string> = {};
+    (Object.entries(keys) as [Provider, string][]).forEach(([p, k]) => {
+      if (k && k.length > 10 && !k.toLowerCase().includes('demo') && !k.toLowerCase().includes('saydemo')) {
+        toSave[p] = k;
+      }
+    });
+    localStorage.setItem('dt_ai_keys', JSON.stringify(toSave));
+  }, [keys]);
+  useEffect(() => { localStorage.setItem('dt_ai_models', JSON.stringify(models)); }, [models]);
 
   // Analysis state
   const [loading,    setLoading]    = useState(false);
@@ -430,6 +454,11 @@ const AiAnalysisDashboard: FC = () => {
   const runAnalysis = useCallback(async () => {
     const key = keys[provider].trim();
     if (!key) { setError(`Please enter your ${cfg.name} API key.`); return; }
+    // Guard against placeholder / demo keys
+    if (key.toLowerCase().includes('demo') || key.toLowerCase().includes('saydemo') || key.length < 20) {
+      setError(`The key you entered looks like a placeholder — please enter a valid ${cfg.name} API key from ${cfg.keyLink}`);
+      return;
+    }
 
     setLoading(true); setError(''); setSections([]); setRaw(''); setDataStatus([]); setProgress(0);
 
@@ -483,6 +512,10 @@ const AiAnalysisDashboard: FC = () => {
   const testConnection = async () => {
     const key = keys[provider].trim();
     if (!key) { setError(`Enter your ${cfg.name} API key first.`); return; }
+    if (key.toLowerCase().includes('demo') || key.toLowerCase().includes('saydemo') || key.length < 20) {
+      setError(`That looks like a placeholder key — please enter a real ${cfg.name} API key.`);
+      return;
+    }
     setDataStatus(['🔌 Testing connection...']);
     setError('');
     try {

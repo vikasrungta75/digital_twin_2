@@ -145,24 +145,15 @@ const Aside = () => {
     return (
         <>
             <aside
-                className={classNames('aside', {
-                    open: true,               // always open on desktop
+                className={classNames('aside', 'open', {
                     aside_rtl: dir === 'rtl',
                 })}
                 style={{
-                    // Fixed width — no animation, no collapse
-                    width: 240,
-                    minWidth: 240,
-                    maxWidth: 240,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: '100vh',
-                    position: 'sticky',
-                    top: 0,
+                    // Let _aside.scss handle position:fixed, top/bottom/left, width
+                    // Only add scrollbar styling that CSS doesn't cover
                     overflowY: 'auto',
                     overflowX: 'hidden',
-                    // Scrollbar styling
-                    scrollbarWidth: 'thin',
+                    scrollbarWidth: 'thin' as const,
                     scrollbarColor: 'rgba(255,255,255,0.15) transparent',
                 }}
             >
