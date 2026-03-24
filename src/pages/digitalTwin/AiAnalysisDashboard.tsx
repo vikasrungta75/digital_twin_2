@@ -26,18 +26,34 @@ interface HistoryItem {
 // ─── DataViz Component ───────────────────────────────────────────────────────
 type ChartType = 'table' | 'bar-v' | 'bar-h' | 'line';
 
+// Refined teal-indigo palette
 const C = {
-  accent:  '#2563eb',
-  accent2: '#3b82f6',
-  accent3: '#60a5fa',
-  slate:   '#0f172a',
-  muted:   '#64748b',
-  subtle:  '#94a3b8',
-  border:  '#e2e8f0',
-  bg:      '#f8fafc',
-  bgCard:  '#ffffff',
-  bgHead:  '#f1f5f9',
-  pink:    '#e91e8c',
+  // Primary series color — rich teal
+  a1: '#0f766e',  // teal-700
+  a2: '#14b8a6',  // teal-500
+  a3: '#5eead4',  // teal-300
+  // Secondary — indigo accent
+  b1: '#4338ca',  // indigo-700
+  b2: '#6366f1',  // indigo-500
+  // UI
+  slate:  '#0f172a',
+  muted:  '#475569',
+  subtle: '#94a3b8',
+  border: '#e2e8f0',
+  bg:     '#f8fafc',
+  bgCard: '#ffffff',
+  bgHead: '#f0fdfa',  // teal tint
+  pink:   '#e91e8c',
+};
+
+// Gradient stops for bars — deepest to lightest teal based on rank
+const barRgb = (i: number, total: number) => {
+  const t = total > 1 ? i / (total - 1) : 0;   // 0 = highest rank, 1 = lowest
+  // From teal-700 to teal-300
+  const r = Math.round(15  + t * (94  - 15));
+  const g = Math.round(118 + t * (234 - 118));
+  const b = Math.round(110 + t * (212 - 110));
+  return `rgb(${r},${g},${b})`;
 };
 
 const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: string }> =
@@ -46,172 +62,155 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
   const [chartType,     setChartType]     = React.useState<ChartType>('table');
   const [tableExpanded, setTableExpanded] = React.useState(false);
 
-  // ── Pixel-level scroll state ──────────────────────────────────────────────
-  // pixelOffset: how many pixels we've scrolled (smooth, not page-based)
-  const [pixelOffset,  setPixelOffset]  = React.useState(0);
-  const [vPixelOffset, setVPixelOffset] = React.useState(0); // vertical bar scrubber
-  const [hDragging,    setHDragging]    = React.useState(false);
-  const [vDragging,    setVDragging]    = React.useState(false);
-  const hScrubRef = React.useRef<HTMLDivElement>(null);
-  const vScrubRef = React.useRef<HTMLDivElement>(null);
+  // Smooth pixel scroll state
+  const [hScroll, setHScroll] = React.useState(0);  // 0–100 for bar-v (horizontal scroll)
+  const [vScroll, setVScroll] = React.useState(0);  // 0–100 for bar-h (vertical scroll)
+  const [lScroll, setLScroll] = React.useState(0);  // 0–100 for line  (horizontal scroll)
+  const [hDrag,   setHDrag]   = React.useState(false);
+  const [vDrag,   setVDrag]   = React.useState(false);
+  const [lDrag,   setLDrag]   = React.useState(false);
+  const hRef = React.useRef<HTMLDivElement>(null);
+  const vRef = React.useRef<HTMLDivElement>(null);
+  const lRef = React.useRef<HTMLDivElement>(null);
 
-  // Sort data descending by value — always show highest first
-  const sortedData = React.useMemo(() => {
-    return [...data].sort((a, b) => Number(b[yKey] ?? 0) - Number(a[yKey] ?? 0));
-  }, [data, yKey]);
+  React.useEffect(() => { setHScroll(0); setVScroll(0); setLScroll(0); }, [chartType, data]);
 
-  const allVals = sortedData.map(r => Number(r[yKey] ?? 0));
-  const allMax  = Math.max(...allVals, 1);
-  const allMin  = Math.min(...allVals, 0);
+  // Sort descending
+  const sorted = React.useMemo(
+    () => [...data].sort((a,b) => Number(b[yKey]??0) - Number(a[yKey]??0)),
+    [data, yKey]
+  );
+  const vals   = sorted.map(r => Number(r[yKey] ?? 0));
+  const vMax   = Math.max(...vals, 1);
+  const vMin   = Math.min(...vals, 0);
+  const range  = vMax - vMin || 1;
 
-  const fmt    = (n: number) => n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1000 ? `${(n/1000).toFixed(1)}k` : n % 1 === 0 ? n.toLocaleString() : n.toFixed(2);
-  const lbl    = (s: any) => { const str = String(s ?? ''); return str.length > 10 ? '…'+str.slice(-8) : str; };
-  const fmtKey = (k: string) => k.split('_').map((w: string) => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+  const fmt    = (n: number) => n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1000 ? `${(n/1000).toFixed(1)}k` : Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
+  const lbl    = (s: any, maxLen = 12) => { const str = String(s??''); return str.length > maxLen ? '…'+str.slice(-(maxLen-1)) : str; };
+  const fmtKey = (k: string) => k.split('_').map((w:string)=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
 
-  // ── Vertical bar dimensions ───────────────────────────────────────────────
-  const BAR_W = 38, BAR_GAP = 10, BAR_H = 220, LBL_H = 52, PAD_L = 48, PAD_T = 20;
-  const barTotalW   = sortedData.length * (BAR_W + BAR_GAP);   // total SVG width
-  const barViewport = 460;                                       // visible pixel width
-  const barMaxScroll = Math.max(0, barTotalW - barViewport);    // max pixel scroll
-  const barOffset   = Math.round((vPixelOffset / 100) * barMaxScroll); // pixels scrolled
+  const scrub = (ref: React.RefObject<HTMLDivElement>, setFn: (v:number)=>void, axis: 'x'|'y') =>
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!ref.current) return;
+      const rect  = ref.current.getBoundingClientRect();
+      const ratio = axis === 'x'
+        ? Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+        : Math.max(0, Math.min(1, (e.clientY - rect.top)  / rect.height));
+      setFn(ratio * 100);
+    };
 
-  // ── Horizontal bar dimensions ─────────────────────────────────────────────
-  const ROW_H = 30, ROW_GAP = 7, LABEL_W = 130, BAR_AREA = 340, PAD_R_H = 60;
-  const rowTotal    = sortedData.length * (ROW_H + ROW_GAP);   // total height of all rows
-  const hViewport   = 320;                                       // visible pixel height
-  const hMaxScroll  = Math.max(0, rowTotal - hViewport);
-  const hOffset     = Math.round((pixelOffset / 100) * hMaxScroll);
-
-  // ── Vertical bar scrubber (right side, vertical) ──────────────────────────
-  const vThumbH  = barMaxScroll > 0 ? Math.max(24, (barViewport / barTotalW) * 100) : 100;
-  const vThumbPct = barMaxScroll > 0 ? (vPixelOffset / 100) * (100 - vThumbH) : 0;
-
-  const handleVScrub = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!vScrubRef.current) return;
-    const rect = vScrubRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    setVPixelOffset(ratio * 100);
-  }, []);
-
-  // ── Horizontal bar scrubber (bottom, horizontal) ──────────────────────────
-  const hThumbW   = hMaxScroll > 0 ? Math.max(24, (hViewport / rowTotal) * 100) : 100;
-  const hThumbPct = hMaxScroll > 0 ? (pixelOffset / 100) * (100 - hThumbW) : 0;
-
-  const handleHScrub = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!hScrubRef.current) return;
-    const rect = hScrubRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    setPixelOffset(ratio * 100);
-  }, []);
-
-  // Reset scroll on data/type change
-  React.useEffect(() => { setPixelOffset(0); setVPixelOffset(0); }, [chartType, data]);
-
-  // ── Vertical bar chart ────────────────────────────────────────────────────
+  // ── "Bar" tab = VERTICAL bars (values on Y axis, VINs on X axis)
+  //    Bars stand upright, VIN labels along the bottom
+  //    Scrubber: horizontal bar underneath (scroll left/right through VINs)
+  // ─────────────────────────────────────────────────────────────────────────
   const renderBarV = () => {
-    const W = Math.max(barTotalW, barViewport);
-    const SCRUB_W = 14;
+    const BAR_W = 52, GAP = 14, H = 280, LBL_H = 60, PAD_L = 52, PAD_T = 24, SCRUB_H = 12;
+    const totalW    = PAD_L + sorted.length * (BAR_W + GAP) + 20;
+    const viewport  = 580;
+    const maxScroll = Math.max(0, totalW - viewport);
+    const offset    = Math.round((hScroll / 100) * maxScroll);
+    const thumbW    = maxScroll > 0 ? Math.max(16, (viewport / totalW) * 100) : 100;
+    const thumbL    = maxScroll > 0 ? (hScroll / 100) * (100 - thumbW) : 0;
+
     return (
-      <div style={{ display:'flex', gap:8, alignItems:'stretch' }}>
-        {/* Chart with clipped viewport */}
-        <div style={{ flex:1, position:'relative', overflow:'hidden', height:PAD_T+BAR_H+LBL_H }}>
+      <div>
+        <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
+          border:`1px solid ${C.border}`, height: PAD_T+H+LBL_H }}>
           <svg
-            viewBox={`${barOffset} 0 ${barViewport} ${PAD_T+BAR_H+LBL_H}`}
-            style={{ display:'block', width:'100%', height:PAD_T+BAR_H+LBL_H,
-              minWidth: barViewport }}
+            viewBox={`${offset} 0 ${viewport} ${PAD_T+H+LBL_H}`}
+            style={{ display:'block', width:'100%', height:PAD_T+H+LBL_H }}
             preserveAspectRatio="none">
             <defs>
-              <linearGradient id="bvGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.accent3}/>
-                <stop offset="60%" stopColor={C.accent}/>
-                <stop offset="100%" stopColor="#1d4ed8"/>
+              <linearGradient id="gBV" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={C.a2}/>
+                <stop offset="100%" stopColor={C.a1}/>
               </linearGradient>
             </defs>
             {/* Y-axis */}
-            <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+BAR_H} stroke={C.border} strokeWidth={1.5}/>
-            {/* Grid lines + Y labels — fixed at left edge of viewport */}
+            <line x1={offset+PAD_L} y1={PAD_T} x2={offset+PAD_L} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={2}/>
+            {/* Y gridlines + labels (follow viewport) */}
             {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
-              const y = PAD_T + BAR_H - f*BAR_H;
+              const y = PAD_T + H - f*H;
               return (
                 <g key={i}>
-                  <line x1={barOffset+PAD_L} y1={y} x2={barOffset+barViewport} y2={y}
-                    stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
-                    strokeDasharray={f===0?'':'3,3'}/>
-                  <text x={barOffset+PAD_L-6} y={y+4} textAnchor="end"
-                    fill={C.subtle} fontSize={9} fontFamily="monospace">
-                    {fmt(f*allMax)}
-                  </text>
-                </g>
-              );
-            })}
-            {/* Bars — all rendered, viewport clips them */}
-            {sortedData.map((row, i) => {
-              const val  = allVals[i];
-              const pct  = val / allMax;
-              const barH = Math.max(pct * BAR_H, 3);
-              const x    = PAD_L + i*(BAR_W+BAR_GAP) + BAR_GAP/2;
-              const y    = PAD_T + BAR_H - barH;
-              // Intensity: top ranks get deeper color
-              const intensity = 1 - (i / sortedData.length) * 0.55;
-              const r = Math.round(37 + (1-intensity)*60);
-              const g = Math.round(99 + (1-intensity)*40);
-              const b = Math.round(235 - (1-intensity)*80);
-              const barColor = `rgb(${r},${g},${b})`;
-              return (
-                <g key={i}>
-                  <rect x={x+2} y={y+3} width={BAR_W} height={barH} rx={4} fill="#0000000a"/>
-                  <rect x={x} y={y} width={BAR_W} height={barH} rx={4} fill={barColor}>
-                    <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
-                  </rect>
-                  {barH > 22 && (
-                    <text x={x+BAR_W/2} y={y+14} textAnchor="middle"
-                      fill="#fff" fontSize={8} fontWeight="700" opacity={0.92}>{fmt(val)}</text>
-                  )}
-                  {barH <= 22 && (
-                    <text x={x+BAR_W/2} y={y-5} textAnchor="middle"
-                      fill={C.muted} fontSize={8} fontWeight="600">{fmt(val)}</text>
-                  )}
-                  <text x={x+BAR_W/2} y={PAD_T+BAR_H+18} textAnchor="end"
-                    fill={C.muted} fontSize={8.5}
-                    transform={`rotate(-40,${x+BAR_W/2},${PAD_T+BAR_H+18})`}>{lbl(row[xKey])}</text>
+                  <line x1={offset+PAD_L} y1={y} x2={offset+viewport} y2={y}
+                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
+                    strokeDasharray={f===0?'':'4,4'}/>
+                  <text x={offset+PAD_L-8} y={y+4} textAnchor="end"
+                    fill={C.subtle} fontSize={10} fontFamily="monospace">{fmt(f*vMax)}</text>
                 </g>
               );
             })}
             {/* X-axis */}
-            <line x1={barOffset+PAD_L} y1={PAD_T+BAR_H} x2={barOffset+barViewport} y2={PAD_T+BAR_H}
-              stroke={C.border} strokeWidth={1.5}/>
+            <line x1={offset+PAD_L} y1={PAD_T+H} x2={offset+viewport} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={2}/>
+            {/* Bars */}
+            {sorted.map((row, i) => {
+              const val  = vals[i];
+              const barH = Math.max((val/vMax)*H, 4);
+              const x    = PAD_L + i*(BAR_W+GAP) + GAP;
+              const y    = PAD_T + H - barH;
+              const clr  = barRgb(i, sorted.length);
+              return (
+                <g key={i}>
+                  {/* Drop shadow */}
+                  <rect x={x+3} y={y+4} width={BAR_W} height={barH} rx={6} fill="rgba(0,0,0,0.06)"/>
+                  {/* Bar */}
+                  <rect x={x} y={y} width={BAR_W} height={barH} rx={6} fill={clr}>
+                    <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
+                  </rect>
+                  {/* Top highlight */}
+                  <rect x={x+4} y={y+3} width={BAR_W-8} height={6} rx={3} fill="rgba(255,255,255,0.3)"/>
+                  {/* Value — inside if tall, above if short */}
+                  {barH >= 28 ? (
+                    <text x={x+BAR_W/2} y={y+18} textAnchor="middle"
+                      fill="#fff" fontSize={10} fontWeight="800">{fmt(val)}</text>
+                  ) : (
+                    <text x={x+BAR_W/2} y={y-7} textAnchor="middle"
+                      fill={C.muted} fontSize={10} fontWeight="700">{fmt(val)}</text>
+                  )}
+                  {/* VIN label — rotated under X axis */}
+                  <text x={x+BAR_W/2} y={PAD_T+H+20} textAnchor="end"
+                    fill={C.muted} fontSize={9.5}
+                    transform={`rotate(-42,${x+BAR_W/2},${PAD_T+H+20})`}>
+                    {lbl(row[xKey], 14)}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
         </div>
 
-        {/* Vertical scrubber — only shown when content overflows */}
-        {barMaxScroll > 0 && (
-          <div style={{ width:SCRUB_W, display:'flex', flexDirection:'column',
-            alignItems:'center', paddingTop:PAD_T, paddingBottom:LBL_H }}>
-            <div
-              ref={vScrubRef}
-              onClick={handleVScrub}
-              onMouseMove={e => { if (vDragging) handleVScrub(e); }}
-              onMouseDown={() => setVDragging(true)}
-              onMouseUp={() => setVDragging(false)}
-              onMouseLeave={() => setVDragging(false)}
-              style={{ flex:1, width:SCRUB_W, position:'relative', background:C.border,
-                borderRadius:SCRUB_W/2, cursor:'pointer', userSelect:'none' }}>
-              {/* Track fill */}
-              <div style={{ position:'absolute', top:0, left:0, right:0, borderRadius:SCRUB_W/2,
-                height:`${vThumbPct+vThumbH}%`, background:`${C.accent}18` }}/>
-              {/* Thumb */}
-              <div style={{
-                position:'absolute', left:'50%', transform:'translateX(-50%)',
-                top:`${vThumbPct}%`, width:SCRUB_W, height:`${vThumbH}%`,
-                minHeight:24, borderRadius:SCRUB_W/2,
-                background:`linear-gradient(180deg,${C.accent3},${C.accent})`,
-                boxShadow:`0 2px 8px ${C.accent}55`,
-                transition: vDragging ? 'none' : 'top 0.12s ease',
-                cursor:'grab', display:'flex', flexDirection:'column',
-                alignItems:'center', justifyContent:'center', gap:2 }}>
-                {[0,1,2].map(i => (
-                  <div key={i} style={{ width:4, height:1.5, background:'rgba(255,255,255,0.75)',
-                    borderRadius:1 }}/>
+        {/* Horizontal scrubber under bar chart */}
+        {maxScroll > 0 && (
+          <div style={{ marginTop:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+              <span style={{ fontSize:10, color:C.subtle }}>
+                {sorted.length} VINs · scroll to see all
+              </span>
+              <span style={{ fontSize:10, color:C.subtle, fontFamily:'monospace' }}>
+                {Math.round((hScroll/100)*(sorted.length-1))+1} – {Math.min(Math.round((hScroll/100)*(sorted.length-1))+Math.floor(viewport/(BAR_W+GAP)), sorted.length)} shown
+              </span>
+            </div>
+            <div ref={hRef}
+              onClick={scrub(hRef, setHScroll, 'x')}
+              onMouseMove={e => { if(hDrag) scrub(hRef, setHScroll, 'x')(e); }}
+              onMouseDown={() => setHDrag(true)}
+              onMouseUp={() => setHDrag(false)}
+              onMouseLeave={() => setHDrag(false)}
+              style={{ position:'relative', height:SCRUB_H, background:C.border,
+                borderRadius:SCRUB_H/2, cursor:'ew-resize', userSelect:'none' }}>
+              <div style={{ position:'absolute', left:0, top:0, height:'100%',
+                width:`${thumbL+thumbW}%`, background:`${C.a1}18`, borderRadius:SCRUB_H/2 }}/>
+              <div style={{ position:'absolute', top:0, height:'100%',
+                left:`${thumbL}%`, width:`${thumbW}%`, borderRadius:SCRUB_H/2,
+                background:`linear-gradient(90deg,${C.a1},${C.a2})`,
+                boxShadow:`0 2px 8px ${C.a1}55`,
+                transition: hDrag ? 'none' : 'left 0.1s ease',
+                cursor:'ew-resize', display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
+                {[0,1,2].map(j => (
+                  <div key={j} style={{ width:1.5, height:SCRUB_H-4, background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
                 ))}
               </div>
             </div>
@@ -221,104 +220,106 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
     );
   };
 
-  // ── Horizontal bar chart ──────────────────────────────────────────────────
+  // ── "Horiz" tab = HORIZONTAL bars (values on X axis, VINs on Y axis)
+  //    Bars go left-to-right, VIN labels on the left
+  //    Scrubber: vertical bar on the right side (scroll up/down through VINs)
+  // ─────────────────────────────────────────────────────────────────────────
   const renderBarH = () => {
-    const SCRUB_H = 10;
-    const totalSVGH = sortedData.length * (ROW_H + ROW_GAP) + 24;
+    const ROW_H = 38, GAP = 8, LABEL_W = 140, BAR_AREA = 380, VAL_W = 64;
+    const SVG_W     = LABEL_W + BAR_AREA + VAL_W;
+    const viewport  = 380;  // visible height in px
+    const totalH    = sorted.length * (ROW_H + GAP);
+    const maxScroll = Math.max(0, totalH - viewport);
+    const offset    = Math.round((vScroll / 100) * maxScroll);
+    const thumbH    = maxScroll > 0 ? Math.max(24, (viewport / totalH) * 100) : 100;
+    const thumbT    = maxScroll > 0 ? (vScroll / 100) * (100 - thumbH) : 0;
+    const SCRUB_W   = 14;
+
     return (
-      <div>
-        {/* Clipped viewport */}
-        <div style={{ overflow:'hidden', height:hViewport, position:'relative' }}>
+      <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
+        {/* Chart */}
+        <div style={{ flex:1, overflow:'hidden', borderRadius:8, background:C.bg,
+          border:`1px solid ${C.border}`, height:viewport }}>
           <svg
-            viewBox={`0 ${hOffset} ${LABEL_W+BAR_AREA+PAD_R_H} ${hViewport}`}
-            style={{ display:'block', width:'100%', height:hViewport }}
+            viewBox={`0 ${offset} ${SVG_W} ${viewport}`}
+            style={{ display:'block', width:'100%', height:viewport }}
             preserveAspectRatio="none">
             <defs>
-              <linearGradient id="bhGrad" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor={C.accent}/>
-                <stop offset="100%" stopColor={C.accent3}/>
+              <linearGradient id="gBH" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor={C.a1}/>
+                <stop offset="100%" stopColor={C.a3}/>
               </linearGradient>
             </defs>
-            {/* Vertical grid lines — anchored to viewport top */}
+            {/* X gridlines (follow viewport vertically) */}
             {[0,0.25,0.5,0.75,1].map((f,i) => {
               const x = LABEL_W + f*BAR_AREA;
               return (
                 <g key={i}>
-                  <line x1={x} y1={hOffset} x2={x} y2={hOffset+hViewport}
-                    stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
-                    strokeDasharray={f===0?'':'3,3'}/>
-                  <text x={x} y={hOffset+hViewport-4} textAnchor="middle"
-                    fill={C.subtle} fontSize={9} fontFamily="monospace">
-                    {fmt(f*allMax)}
-                  </text>
+                  <line x1={x} y1={offset} x2={x} y2={offset+viewport}
+                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
+                    strokeDasharray={f===0?'':'4,4'}/>
                 </g>
               );
             })}
-            {/* All rows rendered — viewport clips via viewBox */}
-            {sortedData.map((row, i) => {
-              const val  = allVals[i];
-              const barW = Math.max((val/allMax)*BAR_AREA, 4);
-              const y    = i*(ROW_H+ROW_GAP);
-              const intensity = 1 - (i/sortedData.length)*0.5;
-              const r2 = Math.round(37  + (1-intensity)*50);
-              const g2 = Math.round(99  + (1-intensity)*30);
-              const b2 = Math.round(235 - (1-intensity)*70);
-              const barColor = `rgb(${r2},${g2},${b2})`;
+            {/* Rows */}
+            {sorted.map((row, i) => {
+              const val   = vals[i];
+              const barW  = Math.max((val/vMax)*BAR_AREA, 6);
+              const y     = i*(ROW_H+GAP);
+              const clr   = barRgb(i, sorted.length);
               return (
                 <g key={i}>
-                  <text x={8} y={y+ROW_H/2+4} fill={C.subtle} fontSize={10} fontWeight="700"
-                    fontFamily="monospace">
-                    {String(i+1).padStart(2,'0')}
-                  </text>
+                  {/* Rank */}
+                  <text x={10} y={y+ROW_H/2+4} fill={C.subtle} fontSize={11}
+                    fontWeight="800" fontFamily="monospace">{String(i+1).padStart(2,'0')}</text>
+                  {/* VIN label */}
                   <text x={LABEL_W-10} y={y+ROW_H/2+4} textAnchor="end"
-                    fill={C.slate} fontSize={11} fontWeight="500">{lbl(row[xKey])}</text>
-                  <rect x={LABEL_W} y={y+4} width={BAR_AREA} height={ROW_H-8} fill="#f1f5f9" rx={4}/>
-                  <rect x={LABEL_W} y={y+4} width={barW} height={ROW_H-8} fill={barColor} rx={4}>
+                    fill={C.slate} fontSize={12} fontWeight="500">{lbl(row[xKey], 16)}</text>
+                  {/* Track */}
+                  <rect x={LABEL_W} y={y+5} width={BAR_AREA} height={ROW_H-10}
+                    fill="#e0f2f1" rx={5}/>
+                  {/* Bar */}
+                  <rect x={LABEL_W} y={y+5} width={barW} height={ROW_H-10}
+                    fill={clr} rx={5}>
                     <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
                   </rect>
+                  {/* Top highlight on bar */}
+                  <rect x={LABEL_W+3} y={y+7} width={Math.max(barW-6,0)} height={5}
+                    rx={3} fill="rgba(255,255,255,0.35)"/>
+                  {/* Value */}
                   <text x={LABEL_W+barW+8} y={y+ROW_H/2+4}
-                    fill={C.accent} fontSize={10} fontWeight="700"
-                    fontFamily="monospace">{fmt(val)}</text>
+                    fill={C.a1} fontSize={11} fontWeight="800" fontFamily="monospace">{fmt(val)}</text>
                 </g>
               );
             })}
           </svg>
         </div>
 
-        {/* Horizontal scrubber — smooth, continuous */}
-        {hMaxScroll > 0 && (
-          <div style={{ marginTop:8, padding:'0 2px' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-              <span style={{ fontSize:10, color:C.subtle }}>
-                {Math.round((pixelOffset/100)*sortedData.length)+1}–
-                {Math.min(Math.round((pixelOffset/100)*sortedData.length)+Math.round(hViewport/(ROW_H+ROW_GAP)), sortedData.length)} of {sortedData.length}
-              </span>
-              <span style={{ fontSize:10, color:C.subtle }}>drag to scroll</span>
-            </div>
-            <div
-              ref={hScrubRef}
-              onClick={handleHScrub}
-              onMouseMove={e => { if (hDragging) handleHScrub(e); }}
-              onMouseDown={() => setHDragging(true)}
-              onMouseUp={() => setHDragging(false)}
-              onMouseLeave={() => setHDragging(false)}
-              style={{ position:'relative', height:SCRUB_H+4, background:C.border,
-                borderRadius:(SCRUB_H+4)/2, cursor:'pointer', userSelect:'none' }}>
-              {/* Fill */}
-              <div style={{ position:'absolute', left:0, top:0, height:'100%',
-                width:`${hThumbPct+hThumbW}%`, background:`${C.accent}18`, borderRadius:(SCRUB_H+4)/2 }}/>
-              {/* Thumb */}
-              <div style={{
-                position:'absolute', top:0, height:'100%',
-                left:`${hThumbPct}%`, width:`${hThumbW}%`,
-                borderRadius:(SCRUB_H+4)/2,
-                background:`linear-gradient(90deg,${C.accent},${C.accent3})`,
-                boxShadow:`0 2px 8px ${C.accent}44`,
-                transition: hDragging ? 'none' : 'left 0.12s ease',
-                cursor:'ew-resize', display:'flex', alignItems:'center', justifyContent:'center', gap:2 }}>
-                {[0,1,2].map(i => (
-                  <div key={i} style={{ width:1.5, height:5, background:'rgba(255,255,255,0.75)',
-                    borderRadius:1 }}/>
+        {/* Vertical scrubber on the right */}
+        {maxScroll > 0 && (
+          <div style={{ width:SCRUB_W, alignSelf:'stretch', display:'flex',
+            flexDirection:'column', paddingTop:4, paddingBottom:4 }}>
+            <div ref={vRef}
+              onClick={scrub(vRef, setVScroll, 'y')}
+              onMouseMove={e => { if(vDrag) scrub(vRef, setVScroll, 'y')(e); }}
+              onMouseDown={() => setVDrag(true)}
+              onMouseUp={() => setVDrag(false)}
+              onMouseLeave={() => setVDrag(false)}
+              style={{ flex:1, position:'relative', background:C.border,
+                borderRadius:SCRUB_W/2, cursor:'ns-resize', userSelect:'none' }}>
+              <div style={{ position:'absolute', left:0, top:0, right:0,
+                height:`${thumbT+thumbH}%`, background:`${C.a1}18`, borderRadius:SCRUB_W/2 }}/>
+              <div style={{ position:'absolute', left:0, right:0,
+                top:`${thumbT}%`, height:`${thumbH}%`, minHeight:24,
+                borderRadius:SCRUB_W/2,
+                background:`linear-gradient(180deg,${C.a2},${C.a1})`,
+                boxShadow:`0 2px 8px ${C.a1}55`,
+                transition: vDrag ? 'none' : 'top 0.1s ease',
+                cursor:'ns-resize', display:'flex', flexDirection:'column',
+                alignItems:'center', justifyContent:'center', gap:2 }}>
+                {[0,1,2].map(j => (
+                  <div key={j} style={{ width:SCRUB_W-4, height:1.5,
+                    background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
                 ))}
               </div>
             </div>
@@ -328,71 +329,131 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
     );
   };
 
-  // ── Line chart ────────────────────────────────────────────────────────────
+  // ── Line chart with horizontal scrubber ──────────────────────────────────
   const renderLine = () => {
-    const W=560, H=220, PAD_L=50, PAD_T=16, PAD_B=52, PAD_R=20;
-    const cW = W - PAD_L - PAD_R;
-    const range = allMax - allMin || 1;
-    const pts = sortedData.map((row, i) => ({
-      x: PAD_L + (sortedData.length > 1 ? (i/(sortedData.length-1))*cW : cW/2),
-      y: PAD_T + H - ((allVals[i]-allMin)/range)*H,
-      val: allVals[i],
+    const PAD_L=54, PAD_T=24, PAD_B=56, PAD_R=24, H=260, SCRUB_H=12;
+    const viewport  = 580;
+    const DOT_STEP  = 22;                                     // min px per data point
+    const totalW    = PAD_L + sorted.length * DOT_STEP + PAD_R;
+    const maxScroll = Math.max(0, totalW - viewport);
+    const offset    = Math.round((lScroll / 100) * maxScroll);
+    const thumbW    = maxScroll > 0 ? Math.max(16, (viewport / totalW) * 100) : 100;
+    const thumbL    = maxScroll > 0 ? (lScroll / 100) * (100 - thumbW) : 0;
+    const cW        = totalW - PAD_L - PAD_R;
+
+    const pts = sorted.map((row, i) => ({
+      x: PAD_L + (sorted.length > 1 ? (i/(sorted.length-1))*cW : cW/2),
+      y: PAD_T + H - ((vals[i]-vMin)/range)*H,
+      val: vals[i],
       label: String(row[xKey] ?? ''),
     }));
     const pathD = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
     const areaD = pts.length > 1
       ? `${pathD} L${pts[pts.length-1].x.toFixed(1)},${PAD_T+H} L${PAD_L},${PAD_T+H} Z`
       : '';
+
     return (
-      <svg viewBox={`0 0 ${W} ${PAD_T+H+PAD_B}`}
-        style={{ display:'block', width:'100%', height:PAD_T+H+PAD_B }}>
-        <defs>
-          <linearGradient id="lineArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={C.accent2} stopOpacity="0.18"/>
-            <stop offset="100%" stopColor={C.accent2} stopOpacity="0.01"/>
-          </linearGradient>
-        </defs>
-        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
-        {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
-          const y = PAD_T + H - f*H;
-          return (
-            <g key={i}>
-              <line x1={PAD_L} y1={y} x2={W-PAD_R} y2={y}
-                stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
-                strokeDasharray={f===0?'':'3,3'}/>
-              <text x={PAD_L-6} y={y+4} textAnchor="end" fill={C.subtle} fontSize={9} fontFamily="monospace">
-                {fmt(allMin + f*range)}
-              </text>
-            </g>
-          );
-        })}
-        <line x1={PAD_L} y1={PAD_T+H} x2={W-PAD_R} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
-        {pts.length > 1 && <path d={areaD} fill="url(#lineArea)"/>}
-        {pts.length > 1 && (
-          <path d={pathD} fill="none" stroke={C.accent} strokeWidth={2.5}
-            strokeLinejoin="round" strokeLinecap="round"/>
-        )}
-        {pts.map((p,i) => (
-          <g key={i}>
-            <circle cx={p.x} cy={p.y} r={5} fill={C.bgCard} stroke={C.accent} strokeWidth={2.5}>
-              <title>{`#${i+1} ${p.label}: ${p.val.toLocaleString()}`}</title>
-            </circle>
-            {sortedData.length <= 12 && (
-              <text x={p.x} y={p.y-11} textAnchor="middle"
-                fill={C.accent} fontSize={9} fontWeight="700">{fmt(p.val)}</text>
+      <div>
+        <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
+          border:`1px solid ${C.border}`, height:PAD_T+H+PAD_B }}>
+          <svg
+            viewBox={`${offset} 0 ${viewport} ${PAD_T+H+PAD_B}`}
+            style={{ display:'block', width:'100%', height:PAD_T+H+PAD_B }}
+            preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="gLA" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={C.a2} stopOpacity="0.25"/>
+                <stop offset="100%" stopColor={C.a2} stopOpacity="0.02"/>
+              </linearGradient>
+            </defs>
+            {/* Y-axis */}
+            <line x1={offset+PAD_L} y1={PAD_T} x2={offset+PAD_L} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={2}/>
+            {/* Y grid + labels (follow viewport) */}
+            {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
+              const y = PAD_T + H - f*H;
+              return (
+                <g key={i}>
+                  <line x1={offset+PAD_L} y1={y} x2={offset+viewport} y2={y}
+                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
+                    strokeDasharray={f===0?'':'4,4'}/>
+                  <text x={offset+PAD_L-8} y={y+4} textAnchor="end"
+                    fill={C.subtle} fontSize={10} fontFamily="monospace">
+                    {fmt(vMin + f*range)}
+                  </text>
+                </g>
+              );
+            })}
+            {/* X-axis */}
+            <line x1={offset+PAD_L} y1={PAD_T+H} x2={offset+viewport} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={2}/>
+            {/* Area */}
+            {pts.length > 1 && <path d={areaD} fill="url(#gLA)"/>}
+            {/* Line */}
+            {pts.length > 1 && (
+              <path d={pathD} fill="none" stroke={C.a1} strokeWidth={2.5}
+                strokeLinejoin="round" strokeLinecap="round"/>
             )}
-            <text x={p.x} y={PAD_T+H+17} textAnchor="end" fill={C.muted} fontSize={9}
-              transform={`rotate(-40,${p.x},${PAD_T+H+17})`}>{lbl(p.label)}</text>
-          </g>
-        ))}
-      </svg>
+            {/* Dots + labels */}
+            {pts.map((p,i) => (
+              <g key={i}>
+                {/* Vertical tick */}
+                <line x1={p.x} y1={PAD_T+H} x2={p.x} y2={PAD_T+H+6}
+                  stroke={C.border} strokeWidth={1}/>
+                {/* Dot */}
+                <circle cx={p.x} cy={p.y} r={5} fill={C.bgCard} stroke={C.a1} strokeWidth={2.5}>
+                  <title>{`#${i+1} ${p.label}: ${p.val.toLocaleString()}`}</title>
+                </circle>
+                {/* Value above dot */}
+                <text x={p.x} y={p.y-12} textAnchor="middle"
+                  fill={C.a1} fontSize={9.5} fontWeight="700">{fmt(p.val)}</text>
+                {/* X label rotated */}
+                <text x={p.x} y={PAD_T+H+20} textAnchor="end"
+                  fill={C.muted} fontSize={9}
+                  transform={`rotate(-42,${p.x},${PAD_T+H+20})`}>{lbl(p.label, 14)}</text>
+              </g>
+            ))}
+          </svg>
+        </div>
+
+        {/* Horizontal scrubber for line chart */}
+        {maxScroll > 0 && (
+          <div style={{ marginTop:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+              <span style={{ fontSize:10, color:C.subtle }}>{sorted.length} data points</span>
+              <span style={{ fontSize:10, color:C.subtle }}>drag to scroll →</span>
+            </div>
+            <div ref={lRef}
+              onClick={scrub(lRef, setLScroll, 'x')}
+              onMouseMove={e => { if(lDrag) scrub(lRef, setLScroll, 'x')(e); }}
+              onMouseDown={() => setLDrag(true)}
+              onMouseUp={() => setLDrag(false)}
+              onMouseLeave={() => setLDrag(false)}
+              style={{ position:'relative', height:SCRUB_H, background:C.border,
+                borderRadius:SCRUB_H/2, cursor:'ew-resize', userSelect:'none' }}>
+              <div style={{ position:'absolute', left:0, top:0, height:'100%',
+                width:`${thumbL+thumbW}%`, background:`${C.a1}18`, borderRadius:SCRUB_H/2 }}/>
+              <div style={{ position:'absolute', top:0, height:'100%',
+                left:`${thumbL}%`, width:`${thumbW}%`, borderRadius:SCRUB_H/2,
+                background:`linear-gradient(90deg,${C.a1},${C.a2})`,
+                boxShadow:`0 2px 8px ${C.a1}55`,
+                transition: lDrag ? 'none' : 'left 0.1s ease',
+                cursor:'ew-resize', display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
+                {[0,1,2].map(j => (
+                  <div key={j} style={{ width:1.5, height:SCRUB_H-4, background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     );
   };
 
   // ── Table ─────────────────────────────────────────────────────────────────
   const renderTable = () => {
-    const keys    = Object.keys(sortedData[0] || {});
-    const visible = tableExpanded ? sortedData : sortedData.slice(0, 10);
+    const keys    = Object.keys(sorted[0] || {});
+    const visible = tableExpanded ? sorted : sorted.slice(0, 10);
     return (
       <div>
         <div style={{ overflowX:'auto', borderRadius:8, border:`1px solid ${C.border}` }}>
@@ -420,7 +481,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
                   {keys.map(k => (
                     <td key={k} style={{ padding:'9px 16px', color:C.slate, fontSize:13 }}>
                       {typeof row[k] === 'number'
-                        ? <span style={{ fontFamily:'monospace', fontWeight:700, color:C.accent }}>
+                        ? <span style={{ fontFamily:'monospace', fontWeight:700, color:C.a1 }}>
                             {row[k].toLocaleString()}
                           </span>
                         : row[k] ?? '—'}
@@ -431,12 +492,12 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
             </tbody>
           </table>
         </div>
-        {sortedData.length > 10 && (
+        {sorted.length > 10 && (
           <button onClick={() => setTableExpanded(e => !e)}
-            style={{ marginTop:10, background:'none', border:`1px solid ${C.accent}44`,
-              borderRadius:8, color:C.accent, fontSize:12, padding:'6px 16px',
+            style={{ marginTop:10, background:'none', border:`1px solid ${C.a1}44`,
+              borderRadius:8, color:C.a1, fontSize:12, padding:'6px 16px',
               cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s' }}>
-            {tableExpanded ? '▲ Show less' : `▼ Show all ${sortedData.length} rows`}
+            {tableExpanded ? '▲ Show less' : `▼ Show all ${sorted.length} rows`}
           </button>
         )}
       </div>
@@ -444,26 +505,26 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
   };
 
   // ── Summary stats ─────────────────────────────────────────────────────────
-  const total  = allVals.reduce((a:number,b:number) => a+b, 0);
-  const avg    = total / (allVals.length||1);
-  const stats  = [
-    { label:'Total',   value:fmt(total), sub:'' },
-    { label:'Average', value:fmt(avg),   sub:'' },
-    { label:'Max',     value:fmt(allVals[0]||0), sub:lbl(sortedData[0]?.[xKey]||'') },
-    { label:'Min',     value:fmt(allVals[allVals.length-1]||0), sub:lbl(sortedData[sortedData.length-1]?.[xKey]||'') },
+  const total = vals.reduce((a:number,b:number)=>a+b,0);
+  const avg   = total / (vals.length||1);
+  const stats = [
+    { label:'Total',   value:fmt(total),     sub:'' },
+    { label:'Average', value:fmt(avg),        sub:'' },
+    { label:'Max',     value:fmt(vals[0]||0), sub:lbl(sorted[0]?.[xKey]||'',14) },
+    { label:'Min',     value:fmt(vals[vals.length-1]||0), sub:lbl(sorted[sorted.length-1]?.[xKey]||'',14) },
     { label:'Records', value:data.length.toLocaleString(), sub:'' },
   ];
 
   const TABS = [
-    { type:'table' as ChartType, icon:'⊞', label:'Table' },
-    { type:'bar-v' as ChartType, icon:'▐▐', label:'Bar' },
+    { type:'table' as ChartType, icon:'⊞', label:'Table'  },
+    { type:'bar-v' as ChartType, icon:'▐▐', label:'Bar'   },
     { type:'bar-h' as ChartType, icon:'≡≡', label:'Horiz' },
-    { type:'line'  as ChartType, icon:'∿',  label:'Line' },
+    { type:'line'  as ChartType, icon:'∿',  label:'Line'  },
   ];
 
   return (
     <div style={{ marginTop:12, background:C.bgCard, borderRadius:14,
-      border:`1px solid ${C.border}`, boxShadow:'0 4px 24px rgba(37,99,235,0.08)',
+      border:`1px solid ${C.border}`, boxShadow:'0 4px 24px rgba(15,118,110,0.10)',
       overflow:'hidden', fontFamily:'inherit' }}>
 
       {/* Header */}
@@ -471,7 +532,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
         background:`linear-gradient(135deg,${C.bgHead},${C.bgCard})`,
         display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
         <div>
-          {title && <div style={{ fontSize:13, fontWeight:700, color:C.accent }}>{title}</div>}
+          {title && <div style={{ fontSize:13, fontWeight:700, color:C.a1 }}>{title}</div>}
           <div style={{ fontSize:11, color:C.subtle, marginTop:2 }}>
             {data.length.toLocaleString()} records · sorted highest → lowest · {fmtKey(xKey)} vs {fmtKey(yKey)}
           </div>
@@ -483,9 +544,9 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
               onClick={() => { setChartType(tab.type); setTableExpanded(false); }}
               style={{ padding:'5px 12px', borderRadius:8, border:'none', cursor:'pointer',
                 fontSize:12, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s',
-                background: chartType===tab.type ? C.accent : 'transparent',
+                background: chartType===tab.type ? C.a1 : 'transparent',
                 color:       chartType===tab.type ? '#fff' : C.muted,
-                boxShadow:   chartType===tab.type ? `0 2px 8px ${C.accent}44` : 'none',
+                boxShadow:   chartType===tab.type ? `0 2px 8px ${C.a1}55` : 'none',
                 display:'flex', alignItems:'center', gap:5 }}>
               <span style={{ fontSize:10 }}>{tab.icon}</span>{tab.label}
             </button>
@@ -500,7 +561,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
             borderRight: i<stats.length-1 ? `1px solid ${C.border}` : '' }}>
             <div style={{ fontSize:10, color:C.subtle, textTransform:'uppercase',
               letterSpacing:0.5, fontWeight:600 }}>{s.label}</div>
-            <div style={{ fontSize:16, fontWeight:800, color:C.accent,
+            <div style={{ fontSize:16, fontWeight:800, color:C.a1,
               lineHeight:1.2, fontFamily:'monospace' }}>{s.value}</div>
             {s.sub && <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>{s.sub}</div>}
           </div>
@@ -508,7 +569,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
       </div>
 
       {/* Chart area */}
-      <div style={{ padding:'16px 18px 12px' }}>
+      <div style={{ padding:'16px 18px 14px' }}>
         {chartType === 'table' && renderTable()}
         {chartType === 'bar-v' && renderBarV()}
         {chartType === 'bar-h' && renderBarH()}
