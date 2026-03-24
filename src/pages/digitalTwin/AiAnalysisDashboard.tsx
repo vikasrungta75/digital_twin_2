@@ -186,7 +186,7 @@ const AiAnalysisDashboard = () => {
         const { tableHTML, suggestionList } = buildResponseParts(finalParsed);
         const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed);
 
-        const chartConfig = buildResponseParts && extractChart ? extractChart(finalParsed) : null;
+        const chartConfig = extractChart(finalParsed);
         return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList, chart: chartConfig };
       });
 
