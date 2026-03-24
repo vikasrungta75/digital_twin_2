@@ -37,6 +37,7 @@ const DT = {
     // ── AI Features ────────────────────────────────────────────────────────────
     CONVERSATIONAL_INTELLIGENCE: lazy(() => import('../pages/digitalTwin/ConversationalIntelligence')),
     VEHICLE_ANALYSIS:          lazy(() => import('../pages/digitalTwin/AiAnalysisDashboard')),
+    VEHICLE_COMPARISON:        lazy(() => import('../pages/digitalTwin/VehicleComparisonDashboard')),
     AGENT_RECOMMENDATION:      lazy(() => import('../pages/digitalTwin/IntelligenceDashboard')),
     // ── Advanced Analysis ──────────────────────────────────────────────────────
     MAINTENANCE:               lazy(() => import('../pages/digitalTwin/MaintenanceDashboard')),
@@ -67,6 +68,7 @@ const contents = [
     // ── AI Features ────────────────────────────────────────────────────────────
     { path: dashboardMenu.conversationalIntelligence.path,    element: W(<DT.CONVERSATIONAL_INTELLIGENCE />),  exact: true },
     { path: dashboardMenu.vehicleAnalysis.path,               element: W(<DT.VEHICLE_ANALYSIS />),             exact: true },
+    { path: dashboardMenu.vehicleComparison.path,             element: W(<DT.VEHICLE_COMPARISON />),           exact: true },
     { path: dashboardMenu.agentRecommendation.path,           element: W(<DT.AGENT_RECOMMENDATION />),         exact: true },
 
     // ── Legacy alias routes (keep old paths working during transition) ─────────

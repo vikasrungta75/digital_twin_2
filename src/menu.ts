@@ -5,6 +5,7 @@ export const dashboardMenu = {
     // ── AI / Intelligence ──────────────────────────────────────────────────────
     conversationalIntelligence: { id: 'dt-conv-intel',  text: 'Conversational Intelligence', path: 'dt/conversational-intelligence', icon: 'Chat',          subMenu: null, searchable: true,  hide: false },
     vehicleAnalysis:         { id: 'dt-vehicle-analysis', text: 'Vehicle Analysis',          path: 'dt/vehicle-analysis',     icon: 'Analytics',           subMenu: null, searchable: true,  hide: false },
+    vehicleComparison:       { id: 'dt-vehicle-comparison', text: 'Vehicle Comparison',       path: 'dt/vehicle-comparison',  icon: 'CompareArrows',       subMenu: null, searchable: true,  hide: false },
     agentRecommendation:     { id: 'dt-agent-rec',    text: 'Agent Recommendation',        path: 'dt/agent-recommendation',  icon: 'Psychology',           subMenu: null, searchable: true,  hide: false },
 
     // ── Core Analysis ──────────────────────────────────────────────────────────
