@@ -5,13 +5,22 @@ import DateFilterBar from './DateFilterBar';
 import Icon from '../../components/icon/Icon';
 
 // ─── DT Copilot Config ────────────────────────────────────────────────────────
-// Modelled exactly on the working FleetCopilot pattern.
-// Only these values differ from fleet: assistId, connector, tables, description.
-// Everything else (headers, fetch pattern, response parsing) is identical to fleet.
-const BIZVIZ_URL     = '/bizviz-proxy/llmService';
-const DT_ASSIST_ID   = '3514581148';
-const DT_CONNECTOR   = '238893540';
-const DT_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+const BIZVIZ_URL   = '/bizviz-proxy/llmService';
+const DT_ASSIST_ID = '3514581148';
+const DT_CONNECTOR = '238893540';
+const DT_TABLES    = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+
+// DT_SPACE_KEY is the space where the BizWiz assistant + connector live.
+// This is ALWAYS '5129' (the DT production space from REACT_APP_DT_CLIENT_ID),
+// regardless of which user account is logged in.
+// The logged-in user's spaceKey (e.g. '1111' for demo) must NOT be used here —
+// it causes "Metadata is not available" because the catalog is in space 5129.
+const DT_SPACE_KEY = (() => {
+  const dtClientId = process.env.REACT_APP_DT_CLIENT_ID || '';
+  // Format: "GSUSJGITCDXHEDBNLIUD@5129" — extract the part after @
+  const atIdx = dtClientId.lastIndexOf('@');
+  return atIdx !== -1 ? dtClientId.slice(atIdx + 1) : '5129';
+})();
 // Short description — same length/style as fleet copilot
 // Exact description from working curl — must match BizWiz assistant 3514581148 config
 const DT_DESCRIPTION = 'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
@@ -772,7 +781,6 @@ const AiAnalysisDashboard = () => {
       ]);
 
       const userId    = user?.user?.id || user?.user?.userId;
-      const spaceKey  = user?.user?.spaceKey;
       const authToken = token;
 
       if (!userId || !authToken) {
@@ -783,18 +791,19 @@ const AiAnalysisDashboard = () => {
         return;
       }
 
+      // DT_SPACE_KEY (5129) is used for all BizWiz calls — NOT user.spaceKey.
+      // The BizWiz assistant and connector live in space 5129 regardless of
+      // which user account is authenticated (demo=1111, production=5129, etc.)
       const headers: Record<string, string> = {
         accept:           'application/json, text/plain, */*',
         'content-type':   'application/x-www-form-urlencoded',
         authtoken:        authToken,
-        spacekey:         spaceKey,
+        spacekey:         DT_SPACE_KEY,
         userid:           String(userId),
         origin:           'https://platform.ravity.io',
         referer:          'https://platform.ravity.io/newGenAi/',
       };
 
-      // IMPORTANT: tables and selected_files must be serialised as JSON strings
-      // inside the data payload — URLSearchParams would otherwise flatten arrays
       const innerData = {
         text:             textToSend,
         userID:           String(userId),
@@ -802,17 +811,17 @@ const AiAnalysisDashboard = () => {
         assistId:         DT_ASSIST_ID,
         connector:        DT_CONNECTOR,
         description:      DT_DESCRIPTION,
-        tables:           DT_TABLES,          // kept as array — JSON.stringify below
+        tables:           DT_TABLES,
         selected_files:   [],
         type:             'connector',
         documentStoreIds: DT_TABLES,
-        spaceKey:         spaceKey,
+        spaceKey:         DT_SPACE_KEY,
       };
 
       const bodyData = new URLSearchParams({
         serviceType: 'process_text',
         data:        JSON.stringify(innerData),
-        spacekey:    spaceKey,
+        spacekey:    DT_SPACE_KEY,
       });
 
       const response = await fetch(BIZVIZ_URL, { method: 'POST', headers, body: bodyData });
@@ -828,6 +837,41 @@ const AiAnalysisDashboard = () => {
       }
 
       const rawData = await response.json();
+
+      // ── Detect known BizWiz backend errors and surface them clearly ──────────
+      const rawResponseStr = typeof rawData?.response === 'string' ? rawData.response : '';
+      let innerParsed: any = {};
+      try { innerParsed = JSON.parse(rawResponseStr); } catch { /* not JSON */ }
+
+      const dataField = innerParsed?.data || rawData?.data || '';
+      const isCatalogError = typeof dataField === 'string' &&
+        (dataField.includes('Metadata is not available') ||
+         dataField.includes('Please check Catalog') ||
+         dataField.includes('not able to retrieve') ||
+         dataField.toLowerCase().includes('catalog'));
+
+      const vizError = innerParsed?.visualization?.error || '';
+      const isVizError = typeof vizError === 'string' &&
+        vizError.toLowerCase().includes('failed to generate');
+
+      if (isCatalogError || (isVizError && !dataField)) {
+        setResponses(prev => [...prev, {
+          question: textToSend,
+          error: [
+            '⚙️ Backend configuration required — table schema not yet indexed.',
+            '',
+            'The BizWiz assistant (ID: 3514581148) cannot find the metadata for:',
+            '  • synthetic_data_kpi',
+            '  • qac_kpi_baseline_data',
+            '',
+            'To fix: Go to platform.ravity.io → GenAI Admin → Connectors',
+            '→ select connector 238893540 → "Sync Schema" / "Update Catalog"',
+            '',
+            `Raw: ${dataField || vizError}`,
+          ].join('\n'),
+        }]);
+        return;
+      }
 
       // Normalise: BizWiz sometimes wraps in {response:"…"}, sometimes returns object directly
       let parsedResponse: any;
@@ -875,8 +919,8 @@ const AiAnalysisDashboard = () => {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
-          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
-          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
+          IngestionId:     process.env.REACT_APP_INGESTIONID     || '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
+          IngestionSecret: process.env.REACT_APP_INGESTIONSECRET || '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
         },
         body: JSON.stringify({
           question:   textToSend,
@@ -884,7 +928,7 @@ const AiAnalysisDashboard = () => {
           user_id:    userId,
           action:     'add',
           session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-          spacekey:   spaceKey,
+          spacekey:   DT_SPACE_KEY,
           user_name:  user?.user?.fullName  || 'Unknown_User',
           user_email: user?.user?.emailID   || 'unknown@ravity.io',
         }),
@@ -1142,10 +1186,17 @@ const AiAnalysisDashboard = () => {
 
                   {/* AI bubble */}
                   {res.error ? (
-                    <div style={{ background:'#fff5f5', border:'1px solid #ffcccc',
-                      color:'#cc2222', padding:'14px 18px', borderRadius:'4px 18px 18px 18px',
-                      fontSize:14 }}>
-                      {res.error}
+                    <div style={{ background:'#fff8f0', border:'1px solid #ffd0a0',
+                      borderRadius:'4px 18px 18px 18px', overflow:'hidden', maxWidth:'80%' }}>
+                      <div style={{ background:'#ff8c00', padding:'8px 16px',
+                        fontSize:12, fontWeight:700, color:'#fff', letterSpacing:0.5 }}>
+                        ⚠ BACKEND ERROR — Action Required
+                      </div>
+                      <pre style={{ margin:0, padding:'14px 18px',
+                        fontSize:13, color:'#7a3800', lineHeight:1.8,
+                        fontFamily:'inherit', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
+                        {res.error}
+                      </pre>
                     </div>
                   ) : (
                     <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
