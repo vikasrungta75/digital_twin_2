@@ -23,67 +23,362 @@ interface HistoryItem {
 }
 
 
-// ─── Inline SVG Bar Chart ─────────────────────────────────────────────────────
-const BarChart: React.FC<{ data: any[]; xKey: string; yKey: string; title?: string }> = ({ data, xKey, yKey, title }) => {
-  const MAX   = 20;
-  const rows  = data.slice(0, MAX);
-  const vals  = rows.map(r => Number(r[yKey] ?? 0));
-  const maxV  = Math.max(...vals, 1);
-  const BAR_W = 36;
-  const GAP   = 8;
-  const H     = 160;
-  const LBL_H = 44;
-  const W     = rows.length * (BAR_W + GAP);
+// ─── DataViz Component ───────────────────────────────────────────────────────
+// Supports: Table (default), Vertical Bar, Horizontal Bar, Line Chart
+// Features: chart type switcher, scroll navigation, value labels, tooltips, download
 
-  const fmt = (n: number) => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
-  const lbl = (s: any) => { const str = String(s ?? ''); return str.length > 8 ? '…'+str.slice(-6) : str; };
+type ChartType = 'table' | 'bar-v' | 'bar-h' | 'line';
 
-  return (
-    <div style={{ marginTop:16, background:'#fff', borderRadius:12, padding:'16px 16px 8px', border:'1px solid #e8e8e8', boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
-      {title && <div style={{ fontSize:12, fontWeight:700, color:'#e91e8c', marginBottom:10, textTransform:'uppercase', letterSpacing:0.5 }}>{title}</div>}
-      <div style={{ overflowX:'auto' }}>
-        <svg viewBox={`0 0 ${Math.max(W,300)} ${H+LBL_H}`}
-          style={{ display:'block', minWidth:Math.max(W,300), height:H+LBL_H, width:'100%' }}>
+const CHART_ICONS: Record<ChartType, string> = {
+  'table': '▦',
+  'bar-v': '▐▐▐',
+  'bar-h': '≡',
+  'line':  '∿',
+};
+const CHART_LABELS: Record<ChartType, string> = {
+  'table': 'Table',
+  'bar-v': 'Bar',
+  'bar-h': 'Horizontal',
+  'line':  'Line',
+};
+
+const PINK  = '#e91e8c';
+const PINKS = ['#e91e8c','#f06292','#ba68c8','#7986cb','#4db6ac','#81c784'];
+
+const DataViz: React.FC<{
+  data: any[];
+  xKey: string;
+  yKey: string;
+  title?: string;
+}> = ({ data, xKey, yKey, title }) => {
+  const [chartType, setChartType] = React.useState<ChartType>('table');
+  const [scrollOffset, setScrollOffset] = React.useState(0);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  const PAGE      = 20;
+  const allRows   = data;
+  const vals      = allRows.map(r => Number(r[yKey] ?? 0));
+  const maxVal    = Math.max(...vals, 1);
+  const minVal    = Math.min(...vals.filter(v => v > 0), 0);
+
+  // Scroll window for charts
+  const visibleRows = allRows.slice(scrollOffset, scrollOffset + PAGE);
+  const visibleVals = visibleRows.map(r => Number(r[yKey] ?? 0));
+  const visibleMax  = Math.max(...visibleVals, 1);
+
+  const canScrollLeft  = scrollOffset > 0;
+  const canScrollRight = scrollOffset + PAGE < allRows.length;
+
+  const scroll = (dir: 'left' | 'right') => {
+    setScrollOffset(o => dir === 'left'
+      ? Math.max(0, o - PAGE)
+      : Math.min(allRows.length - PAGE, o + PAGE));
+  };
+
+  const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M`
+    : n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(Math.round(n));
+  const lbl = (s: any) => {
+    const str = String(s ?? '');
+    return str.length > 9 ? '…'+str.slice(-7) : str;
+  };
+  const fmtKey = (k: string) => k.split('_').map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+
+  // ── Vertical bar chart ──────────────────────────────────────────────────────
+  const renderBarV = () => {
+    const BAR_W = 40, GAP = 10, H = 200, LBL_H = 50;
+    const W = visibleRows.length * (BAR_W + GAP);
+    return (
+      <div ref={scrollRef} style={{ overflowX:'hidden' }}>
+        <svg viewBox={`0 0 ${Math.max(W,400)} ${H+LBL_H}`}
+          style={{ display:'block', width:'100%', minWidth:Math.max(W,400), height:H+LBL_H }}>
+          {/* Grid lines */}
           {[0,0.25,0.5,0.75,1].map((f,i) => (
             <g key={i}>
-              <line x1={0} y1={H - f*H} x2={W} y2={H - f*H}
-                stroke={f===0?'#ccc':'#eee'} strokeWidth={f===0?1:0.7} strokeDasharray={f===0?'':'4,4'}/>
-              <text x={2} y={H - f*H - 3} fill="#aaa" fontSize={9}>{fmt(f*maxV)}</text>
+              <line x1={0} y1={H-f*H} x2={W} y2={H-f*H}
+                stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
+                strokeDasharray={f===0?'':'4,4'}/>
+              <text x={2} y={H-f*H-3} fill="#bbb" fontSize={9}>{fmt(f*visibleMax)}</text>
             </g>
           ))}
-          {rows.map((row, i) => {
-            const val  = vals[i];
-            const barH = Math.max((val/maxV)*H, 2);
+          {/* Bars */}
+          {visibleRows.map((row, i) => {
+            const val  = visibleVals[i];
+            const barH = Math.max((val/visibleMax)*H, 2);
             const x    = i*(BAR_W+GAP);
-            const y    = H - barH;
-            const hue  = 330;
-            const sat  = 60 + (i%3)*8;
+            const y    = H-barH;
+            const clr  = PINKS[i % PINKS.length];
             return (
               <g key={i}>
                 <rect x={x} y={y} width={BAR_W} height={barH}
-                  fill={`hsl(${hue},${sat}%,55%)`} rx={4} opacity={0.9}>
+                  fill={clr} rx={4} opacity={0.85}>
                   <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
                 </rect>
-                <text x={x+BAR_W/2} y={y-4} textAnchor="middle" fill="#555" fontSize={8} fontWeight="600">
-                  {fmt(val)}
-                </text>
-                <text x={x+BAR_W/2} y={H+14} textAnchor="middle" fill="#888" fontSize={8}
-                  transform={`rotate(-35,${x+BAR_W/2},${H+14})`}>
-                  {lbl(row[xKey])}
-                </text>
+                {/* Value on top */}
+                <text x={x+BAR_W/2} y={y-5} textAnchor="middle"
+                  fill="#555" fontSize={9} fontWeight="600">{fmt(val)}</text>
+                {/* X label */}
+                <text x={x+BAR_W/2} y={H+16} textAnchor="middle"
+                  fill="#888" fontSize={8.5}
+                  transform={`rotate(-40,${x+BAR_W/2},${H+16})`}>{lbl(row[xKey])}</text>
               </g>
             );
           })}
         </svg>
       </div>
-      {data.length > MAX && (
-        <div style={{ fontSize:11, color:'#aaa', marginTop:4, textAlign:'center' }}>
-          Showing first {MAX} of {data.length} records
+    );
+  };
+
+  // ── Horizontal bar chart ────────────────────────────────────────────────────
+  const renderBarH = () => {
+    const ROW_H = 34, GAP = 6, LABEL_W = 120, CHART_W = 380;
+    const H = visibleRows.length * (ROW_H + GAP);
+    return (
+      <div style={{ overflowY:'hidden' }}>
+        <svg viewBox={`0 0 ${LABEL_W+CHART_W+60} ${H+10}`}
+          style={{ display:'block', width:'100%', height:H+10 }}>
+          {/* Grid lines */}
+          {[0,0.25,0.5,0.75,1].map((f,i) => {
+            const x = LABEL_W + f*CHART_W;
+            return (
+              <g key={i}>
+                <line x1={x} y1={0} x2={x} y2={H}
+                  stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
+                  strokeDasharray={f===0?'':'4,4'}/>
+                <text x={x} y={H+12} textAnchor="middle" fill="#bbb" fontSize={9}>
+                  {fmt(f*visibleMax)}
+                </text>
+              </g>
+            );
+          })}
+          {visibleRows.map((row, i) => {
+            const val  = visibleVals[i];
+            const barW = (val/visibleMax)*CHART_W;
+            const y    = i*(ROW_H+GAP);
+            const clr  = PINKS[i % PINKS.length];
+            const labelText = lbl(row[xKey]);
+            return (
+              <g key={i}>
+                {/* Label */}
+                <text x={LABEL_W-8} y={y+ROW_H/2+4} textAnchor="end"
+                  fill="#555" fontSize={11}>{labelText}</text>
+                {/* Bar background */}
+                <rect x={LABEL_W} y={y+4} width={CHART_W} height={ROW_H-8}
+                  fill="#f8f8f8" rx={4}/>
+                {/* Bar */}
+                <rect x={LABEL_W} y={y+4} width={Math.max(barW,2)} height={ROW_H-8}
+                  fill={clr} rx={4} opacity={0.85}>
+                  <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
+                </rect>
+                {/* Value */}
+                <text x={LABEL_W+barW+6} y={y+ROW_H/2+4}
+                  fill="#555" fontSize={10} fontWeight="600">{fmt(val)}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    );
+  };
+
+  // ── Line chart ──────────────────────────────────────────────────────────────
+  const renderLine = () => {
+    const W = 500, H = 200, PAD_L = 40, PAD_B = 50;
+    const cW = W - PAD_L;
+    const pts = visibleRows.map((row, i) => ({
+      x: PAD_L + (i/(Math.max(visibleRows.length-1,1)))*cW,
+      y: H - ((visibleVals[i]-minVal)/(visibleMax-minVal||1))*H,
+      val: visibleVals[i],
+      lbl: String(row[xKey] ?? ''),
+    }));
+    const pathD = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    const areaD = pts.length > 0
+      ? `${pathD} L${pts[pts.length-1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`
+      : '';
+    return (
+      <div style={{ overflowX:'hidden' }}>
+        <svg viewBox={`0 0 ${W} ${H+PAD_B}`}
+          style={{ display:'block', width:'100%', height:H+PAD_B }}>
+          {/* Grid */}
+          {[0,0.25,0.5,0.75,1].map((f,i) => (
+            <g key={i}>
+              <line x1={PAD_L} y1={H-f*H} x2={W} y2={H-f*H}
+                stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
+                strokeDasharray={f===0?'':'4,4'}/>
+              <text x={PAD_L-4} y={H-f*H+4} textAnchor="end" fill="#bbb" fontSize={9}>
+                {fmt(minVal + f*(visibleMax-minVal))}
+              </text>
+            </g>
+          ))}
+          {/* Area fill */}
+          <path d={areaD} fill={PINK} opacity={0.08}/>
+          {/* Line */}
+          <path d={pathD} fill="none" stroke={PINK} strokeWidth={2.5}
+            strokeLinejoin="round" strokeLinecap="round"/>
+          {/* Points + labels */}
+          {pts.map((p,i) => (
+            <g key={i}>
+              <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={PINK} strokeWidth={2}>
+                <title>{`${p.lbl}: ${p.val.toLocaleString()}`}</title>
+              </circle>
+              {visibleRows.length <= 10 && (
+                <text x={p.x} y={p.y-10} textAnchor="middle" fill="#555" fontSize={9} fontWeight="600">
+                  {fmt(p.val)}
+                </text>
+              )}
+              <text x={p.x} y={H+16} textAnchor="middle" fill="#888" fontSize={8.5}
+                transform={`rotate(-40,${p.x},${H+16})`}>{lbl(p.lbl)}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    );
+  };
+
+  // ── Table ───────────────────────────────────────────────────────────────────
+  const [tableExpanded, setTableExpanded] = React.useState(false);
+  const renderTable = () => {
+    const keys    = Object.keys(allRows[0] || {});
+    const visible = tableExpanded ? allRows : allRows.slice(0, 10);
+    return (
+      <div>
+        <div style={{ overflowX:'auto', borderRadius:8, border:'1px solid #eee' }}>
+          <table style={{ borderCollapse:'collapse', width:'100%', fontSize:13 }}>
+            <thead>
+              <tr style={{ background:'#fafafa', borderBottom:'2px solid #e8e8e8' }}>
+                {keys.map(k => (
+                  <th key={k} style={{ padding:'10px 14px', textAlign:'left', color:'#555',
+                    fontWeight:700, fontSize:11, textTransform:'uppercase', letterSpacing:0.5,
+                    whiteSpace:'nowrap' }}>{fmtKey(k)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((row, i) => (
+                <tr key={i} style={{ borderBottom:'1px solid #f5f5f5',
+                  background: i%2===0 ? '#fff' : '#fafffe' }}>
+                  {keys.map(k => (
+                    <td key={k} style={{ padding:'9px 14px', color:'#333', fontSize:13 }}>
+                      {typeof row[k] === 'number' ? row[k].toLocaleString() : (row[k] ?? '—')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {allRows.length > 10 && (
+          <button onClick={() => setTableExpanded(e => !e)}
+            style={{ marginTop:8, background:'none', border:`1px solid ${PINK}33`,
+              borderRadius:8, color:PINK, fontSize:12, padding:'5px 14px',
+              cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s' }}>
+            {tableExpanded ? `▲ Show less` : `▼ Show all ${allRows.length} rows`}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  // ── Summary stats row ───────────────────────────────────────────────────────
+  const total   = vals.reduce((a,b) => a+b, 0);
+  const average = total / vals.length;
+  const topRow  = allRows[vals.indexOf(Math.max(...vals))];
+  const stats   = [
+    { label:'Total',   value: fmt(total) },
+    { label:'Average', value: fmt(average) },
+    { label:'Max',     value: fmt(Math.max(...vals)), sub: topRow ? lbl(topRow[xKey]) : '' },
+    { label:'Min',     value: fmt(Math.min(...vals)) },
+    { label:'Records', value: allRows.length.toLocaleString() },
+  ];
+
+  return (
+    <div style={{ marginTop:14, background:'#fff', borderRadius:14, border:'1px solid #e8e8e8',
+      boxShadow:'0 2px 12px rgba(233,30,140,0.06)', overflow:'hidden' }}>
+
+      {/* Header */}
+      <div style={{ padding:'12px 16px', borderBottom:'1px solid #f0f0f0',
+        display:'flex', alignItems:'center', justifyContent:'space-between',
+        flexWrap:'wrap', gap:10, background:'linear-gradient(135deg,#fff5f9,#fff)' }}>
+        <div>
+          {title && <div style={{ fontSize:13, fontWeight:700, color:PINK }}>{title}</div>}
+          <div style={{ fontSize:11, color:'#aaa', marginTop:2 }}>
+            {allRows.length} records · {fmtKey(xKey)} vs {fmtKey(yKey)}
+          </div>
+        </div>
+        {/* Chart type switcher */}
+        <div style={{ display:'flex', gap:4, background:'#f5f5f5', borderRadius:10, padding:3 }}>
+          {(Object.keys(CHART_ICONS) as ChartType[]).map(type => (
+            <button key={type} onClick={() => { setChartType(type); setScrollOffset(0); }}
+              title={CHART_LABELS[type]}
+              style={{ padding:'5px 10px', borderRadius:8, border:'none', cursor:'pointer',
+                fontSize:12, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s',
+                background: chartType===type ? PINK : 'transparent',
+                color:       chartType===type ? '#fff' : '#888',
+                boxShadow:   chartType===type ? `0 2px 8px ${PINK}44` : 'none',
+              }}>
+              {CHART_ICONS[type]} {CHART_LABELS[type]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary stats */}
+      <div style={{ display:'flex', borderBottom:'1px solid #f5f5f5', background:'#fafafa' }}>
+        {stats.map((s,i) => (
+          <div key={i} style={{ flex:1, padding:'8px 14px', borderRight: i<stats.length-1 ? '1px solid #f0f0f0':'' }}>
+            <div style={{ fontSize:10, color:'#bbb', textTransform:'uppercase', letterSpacing:0.5 }}>{s.label}</div>
+            <div style={{ fontSize:15, fontWeight:700, color:PINK, lineHeight:1.3 }}>{s.value}</div>
+            {s.sub && <div style={{ fontSize:10, color:'#aaa' }}>{s.sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Chart area */}
+      <div style={{ padding:'16px 16px 8px' }}>
+        {chartType === 'table' && renderTable()}
+        {chartType === 'bar-v' && renderBarV()}
+        {chartType === 'bar-h' && renderBarH()}
+        {chartType === 'line'  && renderLine()}
+      </div>
+
+      {/* Scroll navigation — only for chart types, not table */}
+      {chartType !== 'table' && allRows.length > PAGE && (
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+          padding:'8px 16px 14px', borderTop:'1px solid #f5f5f5' }}>
+          <button onClick={() => scroll('left')} disabled={!canScrollLeft}
+            style={{ padding:'6px 16px', borderRadius:8, border:`1px solid ${canScrollLeft?PINK:'#eee'}`,
+              background: canScrollLeft ? `${PINK}10` : '#fafafa',
+              color: canScrollLeft ? PINK : '#ccc',
+              cursor: canScrollLeft ? 'pointer' : 'not-allowed', fontSize:12, fontWeight:600,
+              fontFamily:'inherit', transition:'all 0.15s' }}>
+            ← Previous
+          </button>
+          <div style={{ fontSize:11, color:'#aaa', textAlign:'center' }}>
+            <span style={{ color:PINK, fontWeight:700 }}>{scrollOffset+1}–{Math.min(scrollOffset+PAGE, allRows.length)}</span>
+            {' '}of {allRows.length}
+            <div style={{ marginTop:3, display:'flex', gap:2, justifyContent:'center' }}>
+              {Array.from({ length: Math.ceil(allRows.length/PAGE) }).map((_,i) => (
+                <div key={i} onClick={() => setScrollOffset(i*PAGE)}
+                  style={{ width: i===Math.floor(scrollOffset/PAGE)?16:6, height:6, borderRadius:3,
+                    background: i===Math.floor(scrollOffset/PAGE) ? PINK : '#e0e0e0',
+                    cursor:'pointer', transition:'all 0.2s' }}/>
+              ))}
+            </div>
+          </div>
+          <button onClick={() => scroll('right')} disabled={!canScrollRight}
+            style={{ padding:'6px 16px', borderRadius:8, border:`1px solid ${canScrollRight?PINK:'#eee'}`,
+              background: canScrollRight ? `${PINK}10` : '#fafafa',
+              color: canScrollRight ? PINK : '#ccc',
+              cursor: canScrollRight ? 'pointer' : 'not-allowed', fontSize:12, fontWeight:600,
+              fontFamily:'inherit', transition:'all 0.15s' }}>
+            Next →
+          </button>
         </div>
       )}
+
     </div>
   );
 };
+
 
 const AiAnalysisDashboard = () => {
   const { vin, apiParams } = useDt();
@@ -620,7 +915,7 @@ const AiAnalysisDashboard = () => {
                       <div style={{ flex:1, minWidth:0 }}>
                         <div>
                           {res.chart && (
-                            <BarChart
+                            <DataViz
                               data={res.chart.data}
                               xKey={res.chart.xKey}
                               yKey={res.chart.yKey}
