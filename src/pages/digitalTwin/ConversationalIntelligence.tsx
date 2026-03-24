@@ -9,18 +9,10 @@ const BIZVIZ_URL   = '/bizviz-proxy/llmService';
 const DT_ASSIST_ID = '3514581148';
 const DT_CONNECTOR = '238893540';
 const DT_TABLES    = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
-
-// DT_SPACE_KEY is the space where the BizWiz assistant + connector live.
-// This is ALWAYS '5129' (the DT production space from REACT_APP_DT_CLIENT_ID),
-// regardless of which user account is logged in.
-// The logged-in user's spaceKey (e.g. '1111' for demo) must NOT be used here —
-// it causes "Metadata is not available" because the catalog is in space 5129.
-const DT_SPACE_KEY = (() => {
-  const dtClientId = process.env.REACT_APP_DT_CLIENT_ID || '';
-  // Format: "GSUSJGITCDXHEDBNLIUD@5129" — extract the part after @
-  const atIdx = dtClientId.lastIndexOf('@');
-  return atIdx !== -1 ? dtClientId.slice(atIdx + 1) : '5129';
-})();
+// NOTE: spaceKey for BizWiz calls must come from the logged-in user's token.
+// The auth token encodes the space — mixing token space with a different spaceKey
+// causes "Invalid space key" (error 320). The assistant/connector/catalog must be
+// configured in the same space the user is logged into.
 // Short description — same length/style as fleet copilot
 // Exact description from working curl — must match BizWiz assistant 3514581148 config
 const DT_DESCRIPTION = 'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
@@ -781,6 +773,7 @@ const AiAnalysisDashboard = () => {
       ]);
 
       const userId    = user?.user?.id || user?.user?.userId;
+      const spaceKey  = user?.user?.spaceKey;
       const authToken = token;
 
       if (!userId || !authToken) {
@@ -791,14 +784,12 @@ const AiAnalysisDashboard = () => {
         return;
       }
 
-      // DT_SPACE_KEY (5129) is used for all BizWiz calls — NOT user.spaceKey.
-      // The BizWiz assistant and connector live in space 5129 regardless of
-      // which user account is authenticated (demo=1111, production=5129, etc.)
+      // spaceKey must match the logged-in user's auth token space
       const headers: Record<string, string> = {
         accept:           'application/json, text/plain, */*',
         'content-type':   'application/x-www-form-urlencoded',
         authtoken:        authToken,
-        spacekey:         DT_SPACE_KEY,
+        spacekey:         spaceKey,
         userid:           String(userId),
         origin:           'https://platform.ravity.io',
         referer:          'https://platform.ravity.io/newGenAi/',
@@ -815,13 +806,13 @@ const AiAnalysisDashboard = () => {
         selected_files:   [],
         type:             'connector',
         documentStoreIds: DT_TABLES,
-        spaceKey:         DT_SPACE_KEY,
+        spaceKey:         spaceKey,
       };
 
       const bodyData = new URLSearchParams({
         serviceType: 'process_text',
         data:        JSON.stringify(innerData),
-        spacekey:    DT_SPACE_KEY,
+        spacekey:    spaceKey,
       });
 
       const response = await fetch(BIZVIZ_URL, { method: 'POST', headers, body: bodyData });
@@ -928,7 +919,7 @@ const AiAnalysisDashboard = () => {
           user_id:    userId,
           action:     'add',
           session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-          spacekey:   DT_SPACE_KEY,
+          spacekey:   spaceKey,
           user_name:  user?.user?.fullName  || 'Unknown_User',
           user_email: user?.user?.emailID   || 'unknown@ravity.io',
         }),
