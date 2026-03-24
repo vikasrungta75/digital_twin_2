@@ -24,241 +24,301 @@ interface HistoryItem {
 
 
 // ─── DataViz Component ───────────────────────────────────────────────────────
-// Supports: Table (default), Vertical Bar, Horizontal Bar, Line Chart
-// Features: chart type switcher, scroll navigation, value labels, tooltips, download
-
 type ChartType = 'table' | 'bar-v' | 'bar-h' | 'line';
 
-const CHART_ICONS: Record<ChartType, string> = {
-  'table': '▦',
-  'bar-v': '▐▐▐',
-  'bar-h': '≡',
-  'line':  '∿',
-};
-const CHART_LABELS: Record<ChartType, string> = {
-  'table': 'Table',
-  'bar-v': 'Bar',
-  'bar-h': 'Horizontal',
-  'line':  'Line',
+// Professional monochromatic blue-slate palette with one accent
+const C = {
+  accent:   '#2563eb',   // strong blue — primary bars/lines
+  accent2:  '#3b82f6',   // lighter blue
+  accent3:  '#60a5fa',   // sky
+  accent4:  '#93c5fd',   // pale
+  slate:    '#0f172a',   // near-black text
+  muted:    '#64748b',   // secondary text
+  subtle:   '#94a3b8',   // tertiary
+  border:   '#e2e8f0',
+  bg:       '#f8fafc',
+  bgCard:   '#ffffff',
+  bgHead:   '#f1f5f9',
+  pink:     '#e91e8c',   // Ravity brand accent (stats + active states only)
 };
 
-const PINK  = '#e91e8c';
-const PINKS = ['#e91e8c','#f06292','#ba68c8','#7986cb','#4db6ac','#81c784'];
+// Bar palette — professional sequential blue shades
+const BAR_COLORS = [
+  '#1d4ed8','#2563eb','#3b82f6','#60a5fa','#93c5fd',
+  '#1e40af','#1d4ed8','#2563eb','#3b82f6','#60a5fa',
+  '#1e3a8a','#1e40af','#1d4ed8','#2563eb','#3b82f6',
+  '#172554','#1e3a8a','#1e40af','#1d4ed8','#2563eb',
+];
 
-const DataViz: React.FC<{
-  data: any[];
-  xKey: string;
-  yKey: string;
-  title?: string;
-}> = ({ data, xKey, yKey, title }) => {
-  const [chartType, setChartType] = React.useState<ChartType>('table');
+const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: string }> =
+  ({ data, xKey, yKey, title }) => {
+
+  const [chartType,    setChartType]    = React.useState<ChartType>('table');
   const [scrollOffset, setScrollOffset] = React.useState(0);
-  const scrollRef = React.useRef<HTMLDivElement>(null);
-
+  const [dragging,     setDragging]     = React.useState(false);
+  const [tableExpanded,setTableExpanded]= React.useState(false);
+  const scrubRef  = React.useRef<HTMLDivElement>(null);
   const PAGE      = 20;
-  const allRows   = data;
-  const vals      = allRows.map(r => Number(r[yKey] ?? 0));
-  const maxVal    = Math.max(...vals, 1);
-  const minVal    = Math.min(...vals.filter(v => v > 0), 0);
+  const totalPages= Math.ceil(data.length / PAGE);
+  const curPage   = Math.floor(scrollOffset / PAGE);
 
-  // Scroll window for charts
-  const visibleRows = allRows.slice(scrollOffset, scrollOffset + PAGE);
+  const visibleRows = data.slice(scrollOffset, scrollOffset + PAGE);
   const visibleVals = visibleRows.map(r => Number(r[yKey] ?? 0));
   const visibleMax  = Math.max(...visibleVals, 1);
+  const allVals     = data.map(r => Number(r[yKey] ?? 0));
+  const allMax      = Math.max(...allVals, 1);
+  const allMin      = Math.min(...allVals, 0);
 
-  const canScrollLeft  = scrollOffset > 0;
-  const canScrollRight = scrollOffset + PAGE < allRows.length;
+  const fmt    = (n: number) => n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1000 ? `${(n/1000).toFixed(1)}k` : n % 1 === 0 ? n.toLocaleString() : n.toFixed(2);
+  const lbl    = (s: any) => { const str = String(s ?? ''); return str.length > 10 ? '…'+str.slice(-8) : str; };
+  const fmtKey = (k: string) => k.split('_').map((w:string) => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
 
-  const scroll = (dir: 'left' | 'right') => {
-    setScrollOffset(o => dir === 'left'
-      ? Math.max(0, o - PAGE)
-      : Math.min(allRows.length - PAGE, o + PAGE));
-  };
+  // Scrubber drag handler
+  const handleScrubClick = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!scrubRef.current || data.length <= PAGE) return;
+    const rect  = scrubRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const page  = Math.min(Math.floor(ratio * totalPages), totalPages - 1);
+    setScrollOffset(page * PAGE);
+  }, [data.length, totalPages]);
 
-  const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M`
-    : n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(Math.round(n));
-  const lbl = (s: any) => {
-    const str = String(s ?? '');
-    return str.length > 9 ? '…'+str.slice(-7) : str;
-  };
-  const fmtKey = (k: string) => k.split('_').map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+  const handleScrubMove = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    handleScrubClick(e);
+  }, [dragging, handleScrubClick]);
 
-  // ── Vertical bar chart ──────────────────────────────────────────────────────
+  // ── Vertical bar ────────────────────────────────────────────────────────────
   const renderBarV = () => {
-    const BAR_W = 40, GAP = 10, H = 200, LBL_H = 50;
-    const W = visibleRows.length * (BAR_W + GAP);
+    const BAR_W=38, GAP=10, H=220, LBL_H=52, PAD_L=42, PAD_T=16;
+    const W = PAD_L + visibleRows.length*(BAR_W+GAP);
+    const gridVals = [0,0.2,0.4,0.6,0.8,1];
     return (
-      <div ref={scrollRef} style={{ overflowX:'hidden' }}>
-        <svg viewBox={`0 0 ${Math.max(W,400)} ${H+LBL_H}`}
-          style={{ display:'block', width:'100%', minWidth:Math.max(W,400), height:H+LBL_H }}>
-          {/* Grid lines */}
-          {[0,0.25,0.5,0.75,1].map((f,i) => (
+      <svg viewBox={`0 0 ${Math.max(W,420)} ${PAD_T+H+LBL_H}`}
+        style={{ display:'block', width:'100%', height:PAD_T+H+LBL_H }}>
+        <defs>
+          <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={C.accent2}/>
+            <stop offset="100%" stopColor={C.accent}/>
+          </linearGradient>
+          <linearGradient id="barGradHov" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#60a5fa"/>
+            <stop offset="100%" stopColor={C.accent2}/>
+          </linearGradient>
+        </defs>
+        {/* Y-axis line */}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
+        {/* Grid + Y labels */}
+        {gridVals.map((f,i) => {
+          const y = PAD_T + H - f*H;
+          return (
             <g key={i}>
-              <line x1={0} y1={H-f*H} x2={W} y2={H-f*H}
-                stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
-                strokeDasharray={f===0?'':'4,4'}/>
-              <text x={2} y={H-f*H-3} fill="#bbb" fontSize={9}>{fmt(f*visibleMax)}</text>
-            </g>
-          ))}
-          {/* Bars */}
-          {visibleRows.map((row, i) => {
-            const val  = visibleVals[i];
-            const barH = Math.max((val/visibleMax)*H, 2);
-            const x    = i*(BAR_W+GAP);
-            const y    = H-barH;
-            const clr  = PINKS[i % PINKS.length];
-            return (
-              <g key={i}>
-                <rect x={x} y={y} width={BAR_W} height={barH}
-                  fill={clr} rx={4} opacity={0.85}>
-                  <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
-                </rect>
-                {/* Value on top */}
-                <text x={x+BAR_W/2} y={y-5} textAnchor="middle"
-                  fill="#555" fontSize={9} fontWeight="600">{fmt(val)}</text>
-                {/* X label */}
-                <text x={x+BAR_W/2} y={H+16} textAnchor="middle"
-                  fill="#888" fontSize={8.5}
-                  transform={`rotate(-40,${x+BAR_W/2},${H+16})`}>{lbl(row[xKey])}</text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    );
-  };
-
-  // ── Horizontal bar chart ────────────────────────────────────────────────────
-  const renderBarH = () => {
-    const ROW_H = 34, GAP = 6, LABEL_W = 120, CHART_W = 380;
-    const H = visibleRows.length * (ROW_H + GAP);
-    return (
-      <div style={{ overflowY:'hidden' }}>
-        <svg viewBox={`0 0 ${LABEL_W+CHART_W+60} ${H+10}`}
-          style={{ display:'block', width:'100%', height:H+10 }}>
-          {/* Grid lines */}
-          {[0,0.25,0.5,0.75,1].map((f,i) => {
-            const x = LABEL_W + f*CHART_W;
-            return (
-              <g key={i}>
-                <line x1={x} y1={0} x2={x} y2={H}
-                  stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
-                  strokeDasharray={f===0?'':'4,4'}/>
-                <text x={x} y={H+12} textAnchor="middle" fill="#bbb" fontSize={9}>
-                  {fmt(f*visibleMax)}
-                </text>
-              </g>
-            );
-          })}
-          {visibleRows.map((row, i) => {
-            const val  = visibleVals[i];
-            const barW = (val/visibleMax)*CHART_W;
-            const y    = i*(ROW_H+GAP);
-            const clr  = PINKS[i % PINKS.length];
-            const labelText = lbl(row[xKey]);
-            return (
-              <g key={i}>
-                {/* Label */}
-                <text x={LABEL_W-8} y={y+ROW_H/2+4} textAnchor="end"
-                  fill="#555" fontSize={11}>{labelText}</text>
-                {/* Bar background */}
-                <rect x={LABEL_W} y={y+4} width={CHART_W} height={ROW_H-8}
-                  fill="#f8f8f8" rx={4}/>
-                {/* Bar */}
-                <rect x={LABEL_W} y={y+4} width={Math.max(barW,2)} height={ROW_H-8}
-                  fill={clr} rx={4} opacity={0.85}>
-                  <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
-                </rect>
-                {/* Value */}
-                <text x={LABEL_W+barW+6} y={y+ROW_H/2+4}
-                  fill="#555" fontSize={10} fontWeight="600">{fmt(val)}</text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    );
-  };
-
-  // ── Line chart ──────────────────────────────────────────────────────────────
-  const renderLine = () => {
-    const W = 500, H = 200, PAD_L = 40, PAD_B = 50;
-    const cW = W - PAD_L;
-    const pts = visibleRows.map((row, i) => ({
-      x: PAD_L + (i/(Math.max(visibleRows.length-1,1)))*cW,
-      y: H - ((visibleVals[i]-minVal)/(visibleMax-minVal||1))*H,
-      val: visibleVals[i],
-      lbl: String(row[xKey] ?? ''),
-    }));
-    const pathD = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    const areaD = pts.length > 0
-      ? `${pathD} L${pts[pts.length-1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`
-      : '';
-    return (
-      <div style={{ overflowX:'hidden' }}>
-        <svg viewBox={`0 0 ${W} ${H+PAD_B}`}
-          style={{ display:'block', width:'100%', height:H+PAD_B }}>
-          {/* Grid */}
-          {[0,0.25,0.5,0.75,1].map((f,i) => (
-            <g key={i}>
-              <line x1={PAD_L} y1={H-f*H} x2={W} y2={H-f*H}
-                stroke={f===0?'#ddd':'#f0f0f0'} strokeWidth={f===0?1.5:0.8}
-                strokeDasharray={f===0?'':'4,4'}/>
-              <text x={PAD_L-4} y={H-f*H+4} textAnchor="end" fill="#bbb" fontSize={9}>
-                {fmt(minVal + f*(visibleMax-minVal))}
+              <line x1={PAD_L} y1={y} x2={W} y2={y}
+                stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
+                strokeDasharray={f===0?'':'3,3'}/>
+              <text x={PAD_L-6} y={y+4} textAnchor="end" fill={C.subtle} fontSize={9} fontFamily="monospace">
+                {fmt(f*visibleMax)}
               </text>
             </g>
-          ))}
-          {/* Area fill */}
-          <path d={areaD} fill={PINK} opacity={0.08}/>
-          {/* Line */}
-          <path d={pathD} fill="none" stroke={PINK} strokeWidth={2.5}
-            strokeLinejoin="round" strokeLinecap="round"/>
-          {/* Points + labels */}
-          {pts.map((p,i) => (
+          );
+        })}
+        {/* Bars */}
+        {visibleRows.map((row, i) => {
+          const val  = visibleVals[i];
+          const barH = Math.max((val/visibleMax)*H, 3);
+          const x    = PAD_L + i*(BAR_W+GAP) + GAP/2;
+          const y    = PAD_T + H - barH;
+          return (
             <g key={i}>
-              <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={PINK} strokeWidth={2}>
-                <title>{`${p.lbl}: ${p.val.toLocaleString()}`}</title>
-              </circle>
-              {visibleRows.length <= 10 && (
-                <text x={p.x} y={p.y-10} textAnchor="middle" fill="#555" fontSize={9} fontWeight="600">
-                  {fmt(p.val)}
+              {/* Shadow */}
+              <rect x={x+2} y={y+3} width={BAR_W} height={barH} rx={4} fill="#00000008"/>
+              {/* Bar */}
+              <rect x={x} y={y} width={BAR_W} height={barH} rx={4} fill="url(#barGrad)">
+                <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
+              </rect>
+              {/* Value label — only if bar is tall enough */}
+              {barH > 20 && (
+                <text x={x+BAR_W/2} y={y+14} textAnchor="middle"
+                  fill="#fff" fontSize={8.5} fontWeight="700" opacity={0.9}>
+                  {fmt(val)}
                 </text>
               )}
-              <text x={p.x} y={H+16} textAnchor="middle" fill="#888" fontSize={8.5}
-                transform={`rotate(-40,${p.x},${H+16})`}>{lbl(p.lbl)}</text>
+              {barH <= 20 && (
+                <text x={x+BAR_W/2} y={y-5} textAnchor="middle"
+                  fill={C.muted} fontSize={8.5} fontWeight="600">{fmt(val)}</text>
+              )}
+              {/* X label */}
+              <text x={x+BAR_W/2} y={PAD_T+H+18} textAnchor="end"
+                fill={C.muted} fontSize={9}
+                transform={`rotate(-40,${x+BAR_W/2},${PAD_T+H+18})`}>{lbl(row[xKey])}</text>
             </g>
-          ))}
-        </svg>
-      </div>
+          );
+        })}
+        {/* X-axis line */}
+        <line x1={PAD_L} y1={PAD_T+H} x2={W} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
+      </svg>
     );
   };
 
-  // ── Table ───────────────────────────────────────────────────────────────────
-  const [tableExpanded, setTableExpanded] = React.useState(false);
+  // ── Horizontal bar ───────────────────────────────────────────────────────────
+  const renderBarH = () => {
+    const ROW_H=30, GAP=7, LABEL_W=130, BAR_AREA=340, PAD_R=60, PAD_T=8;
+    const H = visibleRows.length*(ROW_H+GAP)+PAD_T;
+    const gridVals = [0,0.25,0.5,0.75,1];
+    return (
+      <svg viewBox={`0 0 ${LABEL_W+BAR_AREA+PAD_R} ${H+24}`}
+        style={{ display:'block', width:'100%', height:H+24 }}>
+        <defs>
+          <linearGradient id="hbarGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={C.accent}/>
+            <stop offset="100%" stopColor={C.accent3}/>
+          </linearGradient>
+        </defs>
+        {/* Vertical grid lines */}
+        {gridVals.map((f,i) => {
+          const x = LABEL_W + f*BAR_AREA;
+          return (
+            <g key={i}>
+              <line x1={x} y1={PAD_T} x2={x} y2={H}
+                stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
+                strokeDasharray={f===0?'':'3,3'}/>
+              <text x={x} y={H+14} textAnchor="middle" fill={C.subtle} fontSize={9} fontFamily="monospace">
+                {fmt(f*visibleMax)}
+              </text>
+            </g>
+          );
+        })}
+        {visibleRows.map((row, i) => {
+          const val  = visibleVals[i];
+          const barW = Math.max((val/visibleMax)*BAR_AREA, 4);
+          const y    = PAD_T + i*(ROW_H+GAP);
+          const rank = i + scrollOffset;
+          return (
+            <g key={i}>
+              {/* Rank badge */}
+              <text x={8} y={y+ROW_H/2+4} fill={C.subtle} fontSize={10} fontWeight="600">
+                {(rank+1).toString().padStart(2,'0')}
+              </text>
+              {/* Label */}
+              <text x={LABEL_W-10} y={y+ROW_H/2+4} textAnchor="end"
+                fill={C.slate} fontSize={11} fontWeight="500">{lbl(row[xKey])}</text>
+              {/* Track */}
+              <rect x={LABEL_W} y={y+4} width={BAR_AREA} height={ROW_H-8}
+                fill="#f1f5f9" rx={4}/>
+              {/* Bar */}
+              <rect x={LABEL_W} y={y+4} width={barW} height={ROW_H-8}
+                fill="url(#hbarGrad)" rx={4}>
+                <title>{`${row[xKey]}: ${val.toLocaleString()}`}</title>
+              </rect>
+              {/* Value */}
+              <text x={LABEL_W+barW+8} y={y+ROW_H/2+4}
+                fill={C.accent} fontSize={10} fontWeight="700">{fmt(val)}</text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  // ── Line chart ───────────────────────────────────────────────────────────────
+  const renderLine = () => {
+    const W=560, H=220, PAD_L=50, PAD_T=16, PAD_B=52, PAD_R=20;
+    const cW = W - PAD_L - PAD_R;
+    const cH = H;
+    const range = visibleMax - allMin || 1;
+    const pts = visibleRows.map((row, i) => ({
+      x: PAD_L + (visibleRows.length > 1 ? (i/(visibleRows.length-1))*cW : cW/2),
+      y: PAD_T + cH - ((visibleVals[i]-allMin)/range)*cH,
+      val: visibleVals[i],
+      label: String(row[xKey] ?? ''),
+    }));
+    const pathD = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    const areaD = pts.length > 1
+      ? `${pathD} L${pts[pts.length-1].x.toFixed(1)},${PAD_T+cH} L${PAD_L},${PAD_T+cH} Z`
+      : '';
+    const gridVals = [0,0.2,0.4,0.6,0.8,1];
+    return (
+      <svg viewBox={`0 0 ${W} ${PAD_T+H+PAD_B}`}
+        style={{ display:'block', width:'100%', height:PAD_T+H+PAD_B }}>
+        <defs>
+          <linearGradient id="lineArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={C.accent2} stopOpacity="0.18"/>
+            <stop offset="100%" stopColor={C.accent2} stopOpacity="0.01"/>
+          </linearGradient>
+        </defs>
+        {/* Y-axis */}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
+        {/* Grid + Y labels */}
+        {gridVals.map((f,i) => {
+          const y = PAD_T + H - f*H;
+          return (
+            <g key={i}>
+              <line x1={PAD_L} y1={y} x2={W-PAD_R} y2={y}
+                stroke={f===0?C.border:'#f1f5f9'} strokeWidth={f===0?1.5:1}
+                strokeDasharray={f===0?'':'3,3'}/>
+              <text x={PAD_L-6} y={y+4} textAnchor="end" fill={C.subtle} fontSize={9} fontFamily="monospace">
+                {fmt(allMin + f*range)}
+              </text>
+            </g>
+          );
+        })}
+        {/* X-axis */}
+        <line x1={PAD_L} y1={PAD_T+H} x2={W-PAD_R} y2={PAD_T+H} stroke={C.border} strokeWidth={1.5}/>
+        {/* Area */}
+        {pts.length > 1 && <path d={areaD} fill="url(#lineArea)"/>}
+        {/* Line */}
+        {pts.length > 1 && (
+          <path d={pathD} fill="none" stroke={C.accent} strokeWidth={2.5}
+            strokeLinejoin="round" strokeLinecap="round"/>
+        )}
+        {/* Points */}
+        {pts.map((p,i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={5} fill={C.bgCard} stroke={C.accent} strokeWidth={2.5}>
+              <title>{`${p.label}: ${p.val.toLocaleString()}`}</title>
+            </circle>
+            {/* Value label — only show for ≤12 points to avoid clutter */}
+            {visibleRows.length <= 12 && (
+              <text x={p.x} y={p.y-11} textAnchor="middle"
+                fill={C.accent} fontSize={9} fontWeight="700">{fmt(p.val)}</text>
+            )}
+            {/* X label */}
+            <text x={p.x} y={PAD_T+H+17} textAnchor="end" fill={C.muted} fontSize={9}
+              transform={`rotate(-40,${p.x},${PAD_T+H+17})`}>{lbl(p.label)}</text>
+          </g>
+        ))}
+      </svg>
+    );
+  };
+
+  // ── Table ────────────────────────────────────────────────────────────────────
   const renderTable = () => {
-    const keys    = Object.keys(allRows[0] || {});
-    const visible = tableExpanded ? allRows : allRows.slice(0, 10);
+    const keys    = Object.keys(data[0] || {});
+    const visible = tableExpanded ? data : data.slice(0, 10);
     return (
       <div>
-        <div style={{ overflowX:'auto', borderRadius:8, border:'1px solid #eee' }}>
+        <div style={{ overflowX:'auto', borderRadius:8, border:`1px solid ${C.border}` }}>
           <table style={{ borderCollapse:'collapse', width:'100%', fontSize:13 }}>
             <thead>
-              <tr style={{ background:'#fafafa', borderBottom:'2px solid #e8e8e8' }}>
+              <tr style={{ background:C.bgHead }}>
                 {keys.map(k => (
-                  <th key={k} style={{ padding:'10px 14px', textAlign:'left', color:'#555',
-                    fontWeight:700, fontSize:11, textTransform:'uppercase', letterSpacing:0.5,
-                    whiteSpace:'nowrap' }}>{fmtKey(k)}</th>
+                  <th key={k} style={{ padding:'10px 16px', textAlign:'left', color:C.muted,
+                    fontWeight:700, fontSize:11, textTransform:'uppercase', letterSpacing:0.6,
+                    whiteSpace:'nowrap', borderBottom:`2px solid ${C.border}` }}>{fmtKey(k)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {visible.map((row, i) => (
-                <tr key={i} style={{ borderBottom:'1px solid #f5f5f5',
-                  background: i%2===0 ? '#fff' : '#fafffe' }}>
+                <tr key={i} style={{ borderBottom:`1px solid ${i%2===0?C.border:'#f8fafc'}`,
+                  background: i%2===0 ? C.bgCard : C.bg,
+                  transition:'background 0.1s' }}>
                   {keys.map(k => (
-                    <td key={k} style={{ padding:'9px 14px', color:'#333', fontSize:13 }}>
-                      {typeof row[k] === 'number' ? row[k].toLocaleString() : (row[k] ?? '—')}
+                    <td key={k} style={{ padding:'9px 16px', color:C.slate, fontSize:13 }}>
+                      {typeof row[k] === 'number'
+                        ? <span style={{ fontFamily:'monospace', fontWeight:600, color:C.accent }}>
+                            {row[k].toLocaleString()}
+                          </span>
+                        : row[k] ?? '—'}
                     </td>
                   ))}
                 </tr>
@@ -266,114 +326,160 @@ const DataViz: React.FC<{
             </tbody>
           </table>
         </div>
-        {allRows.length > 10 && (
+        {data.length > 10 && (
           <button onClick={() => setTableExpanded(e => !e)}
-            style={{ marginTop:8, background:'none', border:`1px solid ${PINK}33`,
-              borderRadius:8, color:PINK, fontSize:12, padding:'5px 14px',
-              cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s' }}>
-            {tableExpanded ? `▲ Show less` : `▼ Show all ${allRows.length} rows`}
+            style={{ marginTop:10, background:'none', border:`1px solid ${C.accent}44`,
+              borderRadius:8, color:C.accent, fontSize:12, padding:'6px 16px',
+              cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s',
+              display:'flex', alignItems:'center', gap:6 }}>
+            {tableExpanded ? '▲ Show less' : `▼ Show all ${data.length} rows`}
           </button>
         )}
       </div>
     );
   };
 
-  // ── Summary stats row ───────────────────────────────────────────────────────
-  const total   = vals.reduce((a,b) => a+b, 0);
-  const average = total / vals.length;
-  const topRow  = allRows[vals.indexOf(Math.max(...vals))];
+  // ── Summary stats ─────────────────────────────────────────────────────────
+  const total   = allVals.reduce((a:number,b:number)=>a+b, 0);
+  const avg     = total / (allVals.length||1);
+  const maxIdx  = allVals.indexOf(Math.max(...allVals));
+  const minIdx  = allVals.indexOf(Math.min(...allVals));
   const stats   = [
-    { label:'Total',   value: fmt(total) },
-    { label:'Average', value: fmt(average) },
-    { label:'Max',     value: fmt(Math.max(...vals)), sub: topRow ? lbl(topRow[xKey]) : '' },
-    { label:'Min',     value: fmt(Math.min(...vals)) },
-    { label:'Records', value: allRows.length.toLocaleString() },
+    { label:'Total',   value:fmt(total),           sub:'' },
+    { label:'Average', value:fmt(avg),              sub:'' },
+    { label:'Max',     value:fmt(allVals[maxIdx]||0), sub:lbl(data[maxIdx]?.[xKey]||'') },
+    { label:'Min',     value:fmt(allVals[minIdx]||0), sub:lbl(data[minIdx]?.[xKey]||'') },
+    { label:'Records', value:data.length.toLocaleString(), sub:'' },
+  ];
+
+  // ── Scrubber ────────────────────────────────────────────────────────────────
+  const thumbPct = totalPages > 1 ? (curPage / (totalPages-1)) * 100 : 0;
+  const trackW   = 100; // percent
+  const thumbW   = Math.max(8, 100/totalPages);
+
+  const renderScrubber = () => {
+    if (data.length <= PAGE || chartType === 'table') return null;
+    return (
+      <div style={{ padding:'10px 20px 16px', borderTop:`1px solid ${C.border}`,
+        background:C.bg }}>
+        {/* Range info */}
+        <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+          <span style={{ fontSize:11, color:C.subtle, fontFamily:'monospace' }}>
+            {scrollOffset+1}–{Math.min(scrollOffset+PAGE, data.length)}
+          </span>
+          <span style={{ fontSize:11, color:C.subtle }}>
+            Page {curPage+1} of {totalPages}
+          </span>
+          <span style={{ fontSize:11, color:C.subtle, fontFamily:'monospace' }}>
+            {data.length} total
+          </span>
+        </div>
+        {/* Scrubber track */}
+        <div
+          ref={scrubRef}
+          onClick={handleScrubClick}
+          onMouseMove={handleScrubMove}
+          onMouseDown={() => setDragging(true)}
+          onMouseUp={() => setDragging(false)}
+          onMouseLeave={() => setDragging(false)}
+          style={{ position:'relative', height:6, background:C.border, borderRadius:6,
+            cursor:'pointer', userSelect:'none' }}>
+          {/* Filled portion */}
+          <div style={{ position:'absolute', left:0, top:0, height:'100%', borderRadius:6,
+            width:`${thumbPct + thumbW}%`, background:`${C.accent}22` }}/>
+          {/* Thumb */}
+          <div style={{ position:'absolute', top:'50%', transform:'translateY(-50%)',
+            left:`${Math.min(thumbPct, 100-thumbW)}%`,
+            width:`${thumbW}%`, height:14, borderRadius:7,
+            background:C.accent, boxShadow:`0 1px 6px ${C.accent}66`,
+            transition: dragging ? 'none' : 'left 0.15s ease',
+            cursor:'grab' }}>
+            {/* Grip lines */}
+            <div style={{ position:'absolute', top:'50%', left:'50%',
+              transform:'translate(-50%,-50%)', display:'flex', gap:2 }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{ width:1.5, height:6, background:'rgba(255,255,255,0.7)', borderRadius:2 }}/>
+              ))}
+            </div>
+          </div>
+          {/* Page tick marks */}
+          {Array.from({length:totalPages}).map((_,i) => (
+            <div key={i} onClick={e => { e.stopPropagation(); setScrollOffset(i*PAGE); }}
+              style={{ position:'absolute', top:-3, transform:'translateX(-50%)',
+                left:`${(i/(totalPages-1||1))*100}%`,
+                width:2, height:12, borderRadius:2,
+                background: i===curPage ? C.accent : C.border,
+                cursor:'pointer', transition:'background 0.15s' }}/>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const TABS: { type: ChartType; icon: string; label: string }[] = [
+    { type:'table', icon:'⊞', label:'Table' },
+    { type:'bar-v', icon:'▐▐', label:'Bar' },
+    { type:'bar-h', icon:'≡≡', label:'Horiz' },
+    { type:'line',  icon:'∿',  label:'Line' },
   ];
 
   return (
-    <div style={{ marginTop:14, background:'#fff', borderRadius:14, border:'1px solid #e8e8e8',
-      boxShadow:'0 2px 12px rgba(233,30,140,0.06)', overflow:'hidden' }}>
+    <div style={{ marginTop:12, background:C.bgCard, borderRadius:14,
+      border:`1px solid ${C.border}`, boxShadow:'0 4px 24px rgba(37,99,235,0.08)',
+      overflow:'hidden', fontFamily:'inherit' }}>
 
-      {/* Header */}
-      <div style={{ padding:'12px 16px', borderBottom:'1px solid #f0f0f0',
-        display:'flex', alignItems:'center', justifyContent:'space-between',
-        flexWrap:'wrap', gap:10, background:'linear-gradient(135deg,#fff5f9,#fff)' }}>
+      {/* ── Header ── */}
+      <div style={{ padding:'14px 18px', borderBottom:`1px solid ${C.border}`,
+        background:`linear-gradient(135deg,${C.bgHead},${C.bgCard})`,
+        display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
         <div>
-          {title && <div style={{ fontSize:13, fontWeight:700, color:PINK }}>{title}</div>}
-          <div style={{ fontSize:11, color:'#aaa', marginTop:2 }}>
-            {allRows.length} records · {fmtKey(xKey)} vs {fmtKey(yKey)}
+          {title && <div style={{ fontSize:13, fontWeight:700, color:C.accent, letterSpacing:0.3 }}>{title}</div>}
+          <div style={{ fontSize:11, color:C.subtle, marginTop:2 }}>
+            {data.length.toLocaleString()} records · {fmtKey(xKey)} vs {fmtKey(yKey)}
           </div>
         </div>
-        {/* Chart type switcher */}
-        <div style={{ display:'flex', gap:4, background:'#f5f5f5', borderRadius:10, padding:3 }}>
-          {(Object.keys(CHART_ICONS) as ChartType[]).map(type => (
-            <button key={type} onClick={() => { setChartType(type); setScrollOffset(0); }}
-              title={CHART_LABELS[type]}
-              style={{ padding:'5px 10px', borderRadius:8, border:'none', cursor:'pointer',
+        {/* Chart type tabs */}
+        <div style={{ display:'flex', gap:2, background:C.bg, borderRadius:10,
+          padding:3, border:`1px solid ${C.border}` }}>
+          {TABS.map(tab => (
+            <button key={tab.type}
+              onClick={() => { setChartType(tab.type); setScrollOffset(0); setTableExpanded(false); }}
+              style={{ padding:'5px 12px', borderRadius:8, border:'none', cursor:'pointer',
                 fontSize:12, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s',
-                background: chartType===type ? PINK : 'transparent',
-                color:       chartType===type ? '#fff' : '#888',
-                boxShadow:   chartType===type ? `0 2px 8px ${PINK}44` : 'none',
-              }}>
-              {CHART_ICONS[type]} {CHART_LABELS[type]}
+                background: chartType===tab.type ? C.accent : 'transparent',
+                color:       chartType===tab.type ? '#fff' : C.muted,
+                boxShadow:   chartType===tab.type ? `0 2px 8px ${C.accent}44` : 'none',
+                display:'flex', alignItems:'center', gap:5 }}>
+              <span style={{ fontSize:10 }}>{tab.icon}</span>{tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Summary stats */}
-      <div style={{ display:'flex', borderBottom:'1px solid #f5f5f5', background:'#fafafa' }}>
+      {/* ── Summary stats ── */}
+      <div style={{ display:'flex', borderBottom:`1px solid ${C.border}`, background:C.bg }}>
         {stats.map((s,i) => (
-          <div key={i} style={{ flex:1, padding:'8px 14px', borderRight: i<stats.length-1 ? '1px solid #f0f0f0':'' }}>
-            <div style={{ fontSize:10, color:'#bbb', textTransform:'uppercase', letterSpacing:0.5 }}>{s.label}</div>
-            <div style={{ fontSize:15, fontWeight:700, color:PINK, lineHeight:1.3 }}>{s.value}</div>
-            {s.sub && <div style={{ fontSize:10, color:'#aaa' }}>{s.sub}</div>}
+          <div key={i} style={{ flex:1, padding:'8px 14px',
+            borderRight: i<stats.length-1 ? `1px solid ${C.border}` : '' }}>
+            <div style={{ fontSize:10, color:C.subtle, textTransform:'uppercase',
+              letterSpacing:0.5, fontWeight:600 }}>{s.label}</div>
+            <div style={{ fontSize:16, fontWeight:800, color:C.accent,
+              lineHeight:1.2, fontFamily:'monospace' }}>{s.value}</div>
+            {s.sub && <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>{s.sub}</div>}
           </div>
         ))}
       </div>
 
-      {/* Chart area */}
-      <div style={{ padding:'16px 16px 8px' }}>
+      {/* ── Chart / Table ── */}
+      <div style={{ padding:'16px 18px 12px' }}>
         {chartType === 'table' && renderTable()}
         {chartType === 'bar-v' && renderBarV()}
         {chartType === 'bar-h' && renderBarH()}
         {chartType === 'line'  && renderLine()}
       </div>
 
-      {/* Scroll navigation — only for chart types, not table */}
-      {chartType !== 'table' && allRows.length > PAGE && (
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-          padding:'8px 16px 14px', borderTop:'1px solid #f5f5f5' }}>
-          <button onClick={() => scroll('left')} disabled={!canScrollLeft}
-            style={{ padding:'6px 16px', borderRadius:8, border:`1px solid ${canScrollLeft?PINK:'#eee'}`,
-              background: canScrollLeft ? `${PINK}10` : '#fafafa',
-              color: canScrollLeft ? PINK : '#ccc',
-              cursor: canScrollLeft ? 'pointer' : 'not-allowed', fontSize:12, fontWeight:600,
-              fontFamily:'inherit', transition:'all 0.15s' }}>
-            ← Previous
-          </button>
-          <div style={{ fontSize:11, color:'#aaa', textAlign:'center' }}>
-            <span style={{ color:PINK, fontWeight:700 }}>{scrollOffset+1}–{Math.min(scrollOffset+PAGE, allRows.length)}</span>
-            {' '}of {allRows.length}
-            <div style={{ marginTop:3, display:'flex', gap:2, justifyContent:'center' }}>
-              {Array.from({ length: Math.ceil(allRows.length/PAGE) }).map((_,i) => (
-                <div key={i} onClick={() => setScrollOffset(i*PAGE)}
-                  style={{ width: i===Math.floor(scrollOffset/PAGE)?16:6, height:6, borderRadius:3,
-                    background: i===Math.floor(scrollOffset/PAGE) ? PINK : '#e0e0e0',
-                    cursor:'pointer', transition:'all 0.2s' }}/>
-              ))}
-            </div>
-          </div>
-          <button onClick={() => scroll('right')} disabled={!canScrollRight}
-            style={{ padding:'6px 16px', borderRadius:8, border:`1px solid ${canScrollRight?PINK:'#eee'}`,
-              background: canScrollRight ? `${PINK}10` : '#fafafa',
-              color: canScrollRight ? PINK : '#ccc',
-              cursor: canScrollRight ? 'pointer' : 'not-allowed', fontSize:12, fontWeight:600,
-              fontFamily:'inherit', transition:'all 0.15s' }}>
-            Next →
-          </button>
-        </div>
-      )}
+      {/* ── Scrubber (bar/line only, >20 rows) ── */}
+      {renderScrubber()}
 
     </div>
   );
@@ -479,7 +585,8 @@ const AiAnalysisDashboard = () => {
         catch { finalParsed = firstParsed; }
 
         const { tableHTML, suggestionList } = buildResponseParts(finalParsed);
-        const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed);
+        const chartConfig = extractChart(finalParsed);
+        const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed, !!chartConfig);
 
         const chartConfig = extractChart(finalParsed);
         return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList, chart: chartConfig };
@@ -545,13 +652,15 @@ const AiAnalysisDashboard = () => {
     return { tableHTML, suggestionList };
   };
 
-  const buildHtmlResponse = (tableHTML: string, parsedResponse: any): string => {
+  const buildHtmlResponse = (tableHTML: string, parsedResponse: any, hasChart: boolean = false): string => {
     const viz = parsedResponse?.visualization || {};
-    return `<div style="font-family: sans-serif; line-height: 1.7; color: #333;">
-      ${tableHTML}
+    // When DataViz renders, skip the duplicate table — show text analysis only
+    const tableSection = hasChart ? '' : tableHTML;
+    return `<div style="font-family: inherit; line-height: 1.75; color: #334155;">
+      ${tableSection}
       ${viz.Answer   || viz.answer   || ''}
       ${viz.Analysis || viz.analysis || ''}
-      ${parsedResponse?.explanation ? `<p style="color:#555577; font-style:italic; font-size:13px;">${parsedResponse.explanation}</p>` : ''}
+      ${parsedResponse?.explanation ? `<p style="color:#94a3b8; font-style:italic; font-size:13px; margin-top:10px; padding-top:10px; border-top:1px solid #f1f5f9;">${parsedResponse.explanation}</p>` : ''}
     </div>`;
   };
 
@@ -645,7 +754,8 @@ const AiAnalysisDashboard = () => {
 
           const { tableHTML, suggestionList: suggs } = buildResponseParts(parsedResponse);
           suggestionList = suggs;
-          cleanedResponse = buildHtmlResponse(tableHTML, parsedResponse);
+          const hasChrt = !!extractChart(parsedResponse);
+          cleanedResponse = buildHtmlResponse(tableHTML, parsedResponse, hasChrt);
         } else {
           cleanedResponse = parsedResponse?.html || 'No response available';
         }
@@ -654,12 +764,12 @@ const AiAnalysisDashboard = () => {
         cleanedResponse = data.response || 'No response available';
       }
 
-      const chartConfig = parsedResponse && !parsedResponse.html ? extractChart(parsedResponse) : null;
+      const chartConfig2 = parsedResponse && !parsedResponse.html ? extractChart(parsedResponse) : null;
       setResponses(prev => [...prev, {
         question:     data.original_text || textToSend,
         htmlResponse: cleanedResponse,
         suggestions:  suggestionList,
-        chart:        chartConfig,
+        chart:        chartConfig2,
       }]);
 
       // Ingestion — fire and forget, same as fleet copilot
