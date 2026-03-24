@@ -3,19 +3,17 @@ import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
 
-// ─── BizWiz Config ────────────────────────────────────────────────────────────
+// ─── BizWiz Config — hardcoded to match working curl 1 exactly ───────────────
+// These values are fixed for the VDTSIA assistant on space 5129.
+// authtoken is session-based and must be provided by the user (expires).
 const BIZVIZ_ENDPOINT    = '/bizviz-proxy/llmService';
-const BIZVIZ_SPACE_KEY   = process.env.REACT_APP_BIZVIZ_SPACE_KEY || '5129';
-const BIZVIZ_ASSIST_ID   = process.env.REACT_APP_BIZVIZ_ASSIST_ID || '3514581148';
-const BIZVIZ_CONNECTOR   = process.env.REACT_APP_BIZVIZ_CONNECTOR || '238893540';
+const BIZVIZ_SPACE_KEY   = '5129';         // fixed — matches curl 1
+const BIZVIZ_USER_ID     = '1217690654';   // fixed — matches curl 1
+const BIZVIZ_ASSIST_ID   = '3514581148';   // fixed — matches curl 1
+const BIZVIZ_CONNECTOR   = '238893540';    // fixed — matches curl 1
 const BIZVIZ_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
 const BIZVIZ_DESCRIPTION =
-  'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) ' +
-  'PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ' +
-  'ARCHITECTURE: Privacy-first, SQL-native, on-premise execution ' +
-  'MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki. ' +
-  'Answer questions about vehicle health, driver behaviour, fuel efficiency, ' +
-  'DTC faults, warranty risk, fleet performance and operational costs.';
+  'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
 
 const INITIAL_SUGGESTIONS = [
   'How many harsh acceleration events per VIN?',
@@ -327,7 +325,7 @@ const AiAnalysisDashboard: React.FC = () => {
 
   // ── Session ID ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const userId = user?.user?.id || user?.user?.userId || '1217690654';
+    const userId = BIZVIZ_USER_ID;
     const key    = `dt_session_${userId}`;
     let sid      = localStorage.getItem(key);
     if (!sid) {
@@ -341,9 +339,8 @@ const AiAnalysisDashboard: React.FC = () => {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const userId   = user?.user?.id || user?.user?.userId;
-        const spaceKey = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
-        if (!userId) return;
+        const userId   = BIZVIZ_USER_ID;
+        const spaceKey = BIZVIZ_SPACE_KEY;
 
         const res = await fetch(`/rest-proxy/vc_chat_history_older?user_id=${userId}`, {
           headers: {
@@ -368,9 +365,8 @@ const AiAnalysisDashboard: React.FC = () => {
 
   // ── Load history session ─────────────────────────────────────────────────────
   const loadHistorySession = async (histSessionId: string) => {
-    const userId   = user?.user?.id || user?.user?.userId;
-    const spaceKey = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
-    if (!userId) return;
+    const userId   = BIZVIZ_USER_ID;
+    const spaceKey = BIZVIZ_SPACE_KEY;
     setLoading(true);
     setMessages([]);
     try {
@@ -417,8 +413,8 @@ const AiAnalysisDashboard: React.FC = () => {
   const deleteHistorySession = async (e: React.MouseEvent, sid: string) => {
     e.stopPropagation();
     if (!window.confirm('Delete this chat history?')) return;
-    const userId   = user?.user?.id || user?.user?.userId;
-    const spaceKey = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
+    const userId   = BIZVIZ_USER_ID;
+    const spaceKey = BIZVIZ_SPACE_KEY;
     try {
       await fetch('/ingestion-proxy/ingestion/dataIngestion', {
         method:  'POST',
@@ -452,9 +448,10 @@ const AiAnalysisDashboard: React.FC = () => {
     }]);
     setLoading(true);
 
-    const userId    = user?.user?.id    || user?.user?.userId || '1217690654';
-    const spaceKey  = user?.user?.spaceKey || BIZVIZ_SPACE_KEY;
-    const authToken = token || '';
+    // Use fixed credentials matching curl 1 — assistant is scoped to space 5129
+    const userId    = BIZVIZ_USER_ID;
+    const spaceKey  = BIZVIZ_SPACE_KEY;
+    const authToken = token || '';  // authtoken still comes from session (expires)
     const sid       = sessionId ||
       `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -463,7 +460,7 @@ const AiAnalysisDashboard: React.FC = () => {
         serviceType: 'process_text',
         data: JSON.stringify({
           text:             contextualText,
-          userID:           userId,
+          userID:           String(userId),
           sessionID:        sid,
           assistId:         BIZVIZ_ASSIST_ID,
           connector:        BIZVIZ_CONNECTOR,
@@ -483,8 +480,8 @@ const AiAnalysisDashboard: React.FC = () => {
           'content-type': 'application/x-www-form-urlencoded',
           accept:         'application/json, text/plain, */*',
           authtoken:      authToken,
-          spacekey:       spaceKey,
-          userid:         String(userId),
+          spacekey:       BIZVIZ_SPACE_KEY,
+          userid:         BIZVIZ_USER_ID,
         },
         body,
       });
@@ -542,7 +539,7 @@ const AiAnalysisDashboard: React.FC = () => {
   const startNewChat = () => {
     setMessages([]);
     setInputText('');
-    const userId = user?.user?.id || user?.user?.userId || '1217690654';
+    const userId = BIZVIZ_USER_ID;
     const newSid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionId(newSid);
     localStorage.setItem(`dt_session_${userId}`, newSid);
