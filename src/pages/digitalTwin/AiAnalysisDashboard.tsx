@@ -182,7 +182,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
                 {sorted.length} VINs · scroll to see all
               </span>
               <span style={{ fontSize:10, color:C.subtle, fontFamily:'monospace' }}>
-                {Math.round((hScroll/100)*(sorted.length-1))+1} – {Math.min(Math.round((hScroll/100)*(sorted.length-1))+Math.floor(viewport/(BAR_W+GAP)), sorted.length)} shown
+                {Math.round((hScroll/100)*(sorted.length-1))+1} – {Math.min(Math.round((hScroll/100)*(sorted.length-1))+Math.floor(580/(BAR_W+GAP)), sorted.length)} shown
               </span>
             </div>
             <div ref={hRef}
