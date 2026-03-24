@@ -3,27 +3,27 @@ import { useSelector } from 'react-redux';
 import { useDt } from '../../contexts/digitalTwinContext';
 import DateFilterBar from './DateFilterBar';
 
-// ─── BizWiz Config — exact values from working curl ──────────────────────────
-// URL:       platform.ravity.io/cxf/bizvizllm/llmService  (proxied via /bizviz-proxy/)
-// Space:     5129
-// UserID:    1217690654
-// AssistId:  3514581148  (VDTSIA — Vehicle Digital Twin SQL Intelligence Agent)
-// Connector: 238893540
-// Tables:    synthetic_data_kpi, qac_kpi_baseline_data
-// authtoken: session-based, sourced from Redux token (expires per session)
-const BIZVIZ_ENDPOINT    = '/bizviz-proxy/llmService';
-const BIZVIZ_SPACE_KEY   = '5129';
-const BIZVIZ_USER_ID     = '1217690654';
-const BIZVIZ_ASSIST_ID   = '3514581148';
-const BIZVIZ_CONNECTOR   = '238893540';
-const BIZVIZ_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+// ─── BizWiz Config ────────────────────────────────────────────────────────────
+// FIXED (belong to the VDTSIA assistant — never change):
+//   assistId:  3514581148
+//   connector: 238893540
+//   tables:    synthetic_data_kpi, qac_kpi_baseline_data
+//
+// DYNAMIC (must match the logged-in user's authtoken — read from Redux):
+//   spaceKey:  user?.user?.spaceKey   ← server validates this == authtoken.space
+//   userID:    user?.user?.id
+//   authtoken: Redux token            ← already session-scoped
+const BIZVIZ_ENDPOINT  = '/bizviz-proxy/llmService';
+const BIZVIZ_ASSIST_ID = '3514581148';
+const BIZVIZ_CONNECTOR = '238893540';
+const BIZVIZ_TABLES    = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
 const BIZVIZ_DESCRIPTION =
-  'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
+  'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent. You MUST ONLY query the two connected collections: (1) synthetic_data_kpi — contains per-trip KPI data with fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, idle_time, ac_usage_frequency, ac_usage_duration, trip_id, trip_start_time, trip_end_time, process_date, altitude_median, gsm_strength_per, speed_distribution_0_20_kmh, speed_distribution_20_60_kmh, speed_distribution_60_80_kmh, speed_distribution_80_100_kmh, speed_distribution_100_120_kmh, speed_distribution_120_140_kmh. (2) qac_kpi_baseline_data — contains fleet baseline averages with fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, total_distance, total_trip_duration, average_speed, fuel_efficiency, co2_emissions, ac_usage, total_idle_time, mileage_loss. NEVER query vt_vehicle_info, vt_dtc_info or any other collection — they are not connected. The context prefix [VIN: x | Period: x to y] in the question tells you which VIN and date range to filter on using the vin field and process_date field in synthetic_data_kpi. Every number you state must come directly from the query results.';
 const INITIAL_SUGGESTIONS = [
-  'How many harsh acceleration events per VIN?',
-  'Show fuel efficiency trend for this vehicle',
-  'List all active DTC fault codes and severity',
-  'How does this vehicle compare to fleet baseline?',
+  'Show harsh acceleration, braking and overspeeding counts for this VIN',
+  'What is the fuel efficiency for this vehicle compared to fleet baseline?',
+  'Show speed distribution breakdown for this VIN',
+  'What is the total distance, trips and CO2 emissions for this vehicle?',
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -298,9 +298,15 @@ const AssistantContent: React.FC<{
 
       {/* Fallback — nothing parsed at all */}
       {!p.chart && !p.answer && !p.analysis && !p.explanation && p.tableRows.length === 0 && (
-        <p style={{ margin: 0, color: '#606080', fontStyle: 'italic' }}>
-          No response content to display.
-        </p>
+        <div style={{ color: '#808080', fontSize: 13, lineHeight: 1.7 }}>
+          <p style={{ margin: '0 0 8px', color: '#e08060', fontWeight: 600 }}>⚠️ No data returned</p>
+          <p style={{ margin: '0 0 6px' }}>This may be because:</p>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            <li>The question requires data not in the connected tables (<code>synthetic_data_kpi</code>, <code>qac_kpi_baseline_data</code>)</li>
+            <li>The selected VIN has no records in the date range</li>
+            <li>Try asking about: harsh events, fuel efficiency, speed, distance, CO₂ or baseline comparisons</li>
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -329,7 +335,7 @@ const AiAnalysisDashboard: React.FC = () => {
 
   // ── Session ID ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const userId = BIZVIZ_USER_ID;
+    const userId = String(user?.user?.id || user?.user?.userId || 'dt_user');
     const key    = `dt_session_${userId}`;
     let sid      = localStorage.getItem(key);
     if (!sid) {
@@ -343,8 +349,8 @@ const AiAnalysisDashboard: React.FC = () => {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const userId   = BIZVIZ_USER_ID;
-        const spaceKey = BIZVIZ_SPACE_KEY;
+        const userId   = String(user?.user?.id || user?.user?.userId || '');
+        const spaceKey = String(user?.user?.spaceKey || '');
 
         const res = await fetch(`/rest-proxy/vc_chat_history_older?user_id=${userId}`, {
           headers: {
@@ -369,8 +375,8 @@ const AiAnalysisDashboard: React.FC = () => {
 
   // ── Load history session ─────────────────────────────────────────────────────
   const loadHistorySession = async (histSessionId: string) => {
-    const userId   = BIZVIZ_USER_ID;
-    const spaceKey = BIZVIZ_SPACE_KEY;
+    const userId   = String(user?.user?.id || user?.user?.userId || '');
+    const spaceKey = String(user?.user?.spaceKey || '');
     setLoading(true);
     setMessages([]);
     try {
@@ -417,8 +423,8 @@ const AiAnalysisDashboard: React.FC = () => {
   const deleteHistorySession = async (e: React.MouseEvent, sid: string) => {
     e.stopPropagation();
     if (!window.confirm('Delete this chat history?')) return;
-    const userId   = BIZVIZ_USER_ID;
-    const spaceKey = BIZVIZ_SPACE_KEY;
+    const userId   = String(user?.user?.id || user?.user?.userId || '');
+    const spaceKey = String(user?.user?.spaceKey || '');
     try {
       await fetch('/ingestion-proxy/ingestion/dataIngestion', {
         method:  'POST',
@@ -443,8 +449,13 @@ const AiAnalysisDashboard: React.FC = () => {
     const text = (overrideText ?? inputText).trim();
     if (!text || loading) return;
 
-    const contextualText =
-      `[VIN: ${vin || 'all'} | Period: ${apiParams.startdate} to ${apiParams.enddate}] ${text}`;
+    // Inject context as explicit SQL instructions, not bracket notation
+    // Bracket notation was being treated as a filter by the SQL agent
+    const vinFilter = vin ? `Filter results to vin = '${vin}'. ` : '';
+    const dateFilter = apiParams.startdate
+      ? `Use process_date between '${apiParams.startdate}' and '${apiParams.enddate}'. `
+      : '';
+    const contextualText = `${vinFilter}${dateFilter}${text}`;
 
     setInputText('');
     setMessages(prev => [...prev, {
@@ -452,10 +463,11 @@ const AiAnalysisDashboard: React.FC = () => {
     }]);
     setLoading(true);
 
-    // Use fixed credentials matching curl 1 — assistant is scoped to space 5129
-    const userId    = BIZVIZ_USER_ID;
-    const spaceKey  = BIZVIZ_SPACE_KEY;
-    const authToken = token || '';  // authtoken still comes from session (expires)
+    // spaceKey and userID MUST match the logged-in user's authtoken
+    // assistId/connector are fixed (they identify the VDTSIA assistant)
+    const userId    = String(user?.user?.id || user?.user?.userId || '');
+    const spaceKey  = String(user?.user?.spaceKey || '');
+    const authToken = token || '';
     const sid       = sessionId ||
       `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -484,8 +496,8 @@ const AiAnalysisDashboard: React.FC = () => {
           'content-type': 'application/x-www-form-urlencoded',
           accept:         'application/json, text/plain, */*',
           authtoken:      authToken,
-          spacekey:       BIZVIZ_SPACE_KEY,
-          userid:         BIZVIZ_USER_ID,
+          spacekey:       spaceKey,
+          userid:         userId,
         },
         body,
       });
@@ -543,7 +555,7 @@ const AiAnalysisDashboard: React.FC = () => {
   const startNewChat = () => {
     setMessages([]);
     setInputText('');
-    const userId = BIZVIZ_USER_ID;
+    const userId = String(user?.user?.id || user?.user?.userId || 'dt_user');
     const newSid = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionId(newSid);
     localStorage.setItem(`dt_session_${userId}`, newSid);
