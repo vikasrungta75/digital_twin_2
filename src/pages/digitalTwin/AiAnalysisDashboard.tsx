@@ -1,1231 +1,861 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useSelector } from 'react-redux';
+import React, { FC, useCallback, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
+import {
+  fetchVehicleInfo, fetchVehicleUsage, fetchOverallData,
+  fetchDtcInfo, fetchDtcTile, fetchFuelEvents,
+  fetchSummaryBaselineTile, fetchOverallKpiData,
+  fetchSpeedDistribution, fetchTurnPercent,
+} from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
-import Icon from '../../components/icon/Icon';
 
-// ─── DT Copilot Config ────────────────────────────────────────────────────────
-// Modelled exactly on the working FleetCopilot pattern.
-// Only these values differ from fleet: assistId, connector, tables, description.
-// Everything else (headers, fetch pattern, response parsing) is identical to fleet.
-const BIZVIZ_URL     = '/bizviz-proxy/llmService';
-const DT_ASSIST_ID   = '3514581148';
-const DT_CONNECTOR   = '238893540';
-const DT_TABLES      = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
-// Short description — same length/style as fleet copilot
-// Exact description from working curl — must match BizWiz assistant 3514581148 config
-const DT_DESCRIPTION = 'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent embedded in the Ravity Vehicle Digital Twin platform. Your job is to answer questions about vehicle health, driver behaviour, fuel efficiency, DTC faults, warranty risk, fleet performance, and operational costs — without any raw vehicle data ever leaving the secure local environment.  You operate in two phases for every user question:  PHASE 1 — SQL GENERATION   You receive a natural-language question from the user.   You generate one precise, parameterised SQL query against the local   vehicle telematics database. You output SQL only — no interpretation,   no commentary, no markdown. If the question cannot be answered from   the available schema, you output: CANNOT_GENERATE_SQL: [reason]  PHASE 2 — RESULT INTERPRETATION   You receive the SQL result rows returned by the local database executor.   You interpret those results using your automotive domain expertise:   Indian road conditions, BS6 emission norms, ARAI benchmarks, Maruti   Suzuki vehicle specifications, Indian fuel pricing, seasonal factors,   and warranty risk rules. Every number you state must come directly   fr';
+// ─── Provider config ─────────────────────────────────────────────────────────
+type Provider = 'gemini' | 'claude' | 'openai';
 
-interface HistoryItem {
-  context: string;
-  session_id: string;
-  last_activity?: string;
+interface ProviderConfig {
+  id: Provider;
+  name: string;
+  icon: string;
+  color: string;
+  models: { id: string; label: string; note?: string }[];
+  keyPlaceholder: string;
+  keyLink: string;
+  keyLinkLabel: string;
 }
 
+const PROVIDERS: ProviderConfig[] = [
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    icon: '✦',
+    color: '#4285F4',
+    keyPlaceholder: 'AIza...',
+    keyLink: 'https://aistudio.google.com/app/apikey',
+    keyLinkLabel: 'aistudio.google.com',
+    models: [
+      { id: 'gemini-2.5-flash-preview-04-17', label: 'Gemini 2.5 Flash Preview', note: 'Best — free tier' },
+      { id: 'gemini-2.0-flash',               label: 'Gemini 2.0 Flash',         note: 'Fast — free tier' },
+      { id: 'gemini-2.0-flash-lite',          label: 'Gemini 2.0 Flash Lite',    note: 'Cheapest — free tier' },
+      { id: 'gemini-1.5-flash',               label: 'Gemini 1.5 Flash',         note: 'Stable' },
+      { id: 'gemini-1.5-flash-8b',            label: 'Gemini 1.5 Flash 8B',      note: 'Smallest' },
+      { id: 'gemini-1.5-pro',                 label: 'Gemini 1.5 Pro',           note: 'Powerful' },
+    ],
+  },
+  {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    icon: '◆',
+    color: '#D97757',
+    keyPlaceholder: 'sk-ant-...',
+    keyLink: 'https://console.anthropic.com/settings/keys',
+    keyLinkLabel: 'console.anthropic.com',
+    models: [
+      { id: 'claude-opus-4-5',    label: 'Claude Opus 4.5',    note: 'Most capable' },
+      { id: 'claude-sonnet-4-5',  label: 'Claude Sonnet 4.5',  note: 'Best balance' },
+      { id: 'claude-haiku-4-5',   label: 'Claude Haiku 4.5',   note: 'Fast & cheap' },
+      { id: 'claude-opus-4-0',    label: 'Claude Opus 4',      note: 'Previous gen' },
+      { id: 'claude-sonnet-4-0',  label: 'Claude Sonnet 4',    note: 'Previous gen' },
+    ],
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    icon: '◎',
+    color: '#10A37F',
+    keyPlaceholder: 'sk-...',
+    keyLink: 'https://platform.openai.com/api-keys',
+    keyLinkLabel: 'platform.openai.com',
+    models: [
+      { id: 'o3',          label: 'o3',              note: 'Most capable' },
+      { id: 'o4-mini',     label: 'o4-mini',         note: 'Best balance' },
+      { id: 'gpt-4.1',     label: 'GPT-4.1',         note: 'Latest GPT-4' },
+      { id: 'gpt-4o',      label: 'GPT-4o',          note: 'Multimodal' },
+      { id: 'gpt-4o-mini', label: 'GPT-4o mini',     note: 'Fast & cheap' },
+      { id: 'gpt-4-turbo', label: 'GPT-4 Turbo',     note: 'Previous gen' },
+    ],
+  },
+];
 
-// ─── DataViz Component ───────────────────────────────────────────────────────
-type ChartType = 'table' | 'bar-v' | 'bar-h' | 'line';
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface AnalysisSection {
+  title: string;
+  icon: string;
+  content: string;
+  severity: 'good' | 'warning' | 'critical' | 'info';
+}
 
-// Refined teal-indigo palette
-const C = {
-  // Primary series color — rich teal
-  a1: '#0f766e',  // teal-700
-  a2: '#14b8a6',  // teal-500
-  a3: '#5eead4',  // teal-300
-  // Secondary — indigo accent
-  b1: '#4338ca',  // indigo-700
-  b2: '#6366f1',  // indigo-500
-  // UI
-  slate:  '#0f172a',
-  muted:  '#475569',
-  subtle: '#94a3b8',
-  border: '#e2e8f0',
-  bg:     '#f8fafc',
-  bgCard: '#ffffff',
-  bgHead: '#f0fdfa',  // teal tint
-  pink:   '#e91e8c',
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const avg = (arr: any[], key: string) => {
+  const vals = arr.map(d => Number(d[key] || 0)).filter(v => isFinite(v));
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+};
+const tot = (arr: any[], key: string) => arr.reduce((s, d) => s + Number(d[key] || 0), 0);
+
+// ─── Build prompt ─────────────────────────────────────────────────────────────
+const buildPrompt = (
+  vin: string, startDate: string, endDate: string,
+  vehicleInfo: any, usage: any, overallData: any[],
+  dtcInfo: any[], dtcTile: any, fuelEvents: any[],
+  baseline: any, kpiData: any[]
+): string => {
+  const vi = vehicleInfo || {};
+  const us = usage || {};
+  const bl = baseline || {};
+  const n  = overallData.length || 1;
+
+  const totalDist      = tot(overallData, 'trip_distance');
+  const totalIdle      = tot(overallData, 'idle_time');
+  const totalHarshAcc  = tot(overallData, 'harsh_acc_count');
+  const totalHarshBrk  = tot(overallData, 'harsh_brk_count');
+  const totalHarshTurn = tot(overallData, 'harsh_turn_count');
+  const totalOverspe   = tot(overallData, 'overspeeding_count');
+  const totalOverspeDur= tot(overallData, 'overspeeding_dur_in_sec');
+  const totalCo2       = tot(overallData, 'co2_emissions');
+  const avgFuelEff     = avg(overallData, 'fuel_efficiency');
+  const avgSpeed       = avg(overallData, 'average_speed');
+  const maxSpeed       = Math.max(...overallData.map(d => Number(d.max_speed || 0)), 0);
+  const totalBatHi     = tot(overallData, 'bat_above_15v');
+  const totalBatLo     = tot(overallData, 'bat_below_9v');
+  const totalFuelLow   = tot(overallData, 'fuel_less_than_20per');
+  const odoResets      = tot(overallData, 'odometerresetcount');
+  const totalKmsLoss   = tot(overallData, 'kms_loss_mlg');
+  const avgAcPct       = avg(overallData, 'percentage_ac_on');
+  const avgAlt         = avg(overallData, 'altitude_median');
+  const avgGsm         = avg(overallData, 'gsm_strength_per');
+  const totalHazard    = tot(overallData, 'hazard_light_activation_count');
+  const totalAccBefore = tot(overallData, 'acc_before_turn_count');
+  const totalBrkAfter  = tot(overallData, 'brk_after_turn_count');
+  const totalAdult     = fuelEvents.reduce((s, d) => s + Number(d.fueladulteration || 0), 0);
+  const totalFilling   = fuelEvents.reduce((s, d) => s + Number(d.filling_detected || 0), 0);
+  const totalEmptying  = fuelEvents.reduce((s, d) => s + Number(d.emptying_detected || 0), 0);
+  const currentFaults  = dtcInfo.filter(d => (d.diagnosticinfo_data_status || '').toLowerCase().includes('current')).length;
+  const histFaults     = dtcInfo.filter(d => (d.diagnosticinfo_data_status || '').toLowerCase().includes('history')).length;
+  const uniqueDtcCodes = Array.from(new Set(dtcInfo.map((d: any) => d.diagnosticinfo_data_dtc || '').filter(Boolean)));
+  const harshPer100    = totalDist > 0 ? ((totalHarshAcc + totalHarshBrk + totalHarshTurn) / totalDist * 100).toFixed(2) : 'N/A';
+
+  return `You are an expert automotive engineer and quality analyst specialising in aftermarket vehicle telematics for the Indian automotive market. You have deep knowledge of BS6 emission norms, ARAI standards, Indian road conditions, and vehicle warranty policies.
+
+=== VEHICLE DIGITAL TWIN — AI ANALYSIS REQUEST ===
+Period: ${startDate} to ${endDate}   VIN: ${vin}
+
+--- VEHICLE IDENTITY ---
+Model: ${vi.vehicle_model || 'Unknown'}  Variant: ${vi.vehicle_variant || 'Unknown'}
+Fuel: ${vi.fuel_type || 'Unknown'}  Engine: ${vi.engine_type || 'Unknown'}  Trans: ${vi.transmission_type || 'Unknown'}
+CNG: ${vi.cng === 'Y' ? 'Yes' : 'No'}  Mfg: ${vi.manuf_date || 'N/A'}  Sale: ${vi.sale_date || 'N/A'}
+Last Service: ${vi.last_serv || 'N/A'}  Last Warranty: ${vi.last_war_claim || 'N/A'}
+
+--- USAGE ---
+Trips: ${us.total_trips || n}  Distance: ${(us.total_distance || totalDist).toFixed(1)} km
+Engine Hrs: ${Number(us.total_eng_hr || 0).toFixed(1)}  Avg Speed: ${(us.avg_speed || avgSpeed).toFixed(1)} km/h  Max Speed: ${maxSpeed.toFixed(1)} km/h
+Start: ${us.start_location || 'N/A'}  End: ${us.end_location || 'N/A'}
+
+--- DRIVING BEHAVIOUR ---
+Harsh Acc: ${totalHarshAcc} events (${(tot(overallData,'harsh_acc_dur_in_sec')/60).toFixed(1)} min)
+Harsh Brk: ${totalHarshBrk} events (${(tot(overallData,'harsh_brk_dur_in_sec')/60).toFixed(1)} min)
+Harsh Turn: ${totalHarshTurn} events (${(tot(overallData,'harsh_turn_dur_in_sec')/60).toFixed(1)} min)
+Total Harsh: ${totalHarshAcc + totalHarshBrk + totalHarshTurn}  Per 100km: ${harshPer100}
+Overspeeding: ${totalOverspe} events (${(totalOverspeDur/60).toFixed(1)} min)
+Acc Before Turn: ${totalAccBefore}  Brk After Turn: ${totalBrkAfter}
+Idle Time: ${(totalIdle/60).toFixed(1)} min  Hazard Activations: ${totalHazard}
+Left/Right Turns: ${tot(overallData,'left_turns')}/${tot(overallData,'right_turns')}
+
+--- FUEL & EFFICIENCY ---
+Avg Fuel Efficiency: ${avgFuelEff.toFixed(2)} km/l
+CO2 Total: ${totalCo2.toFixed(2)} kg  CO2/km: ${totalDist > 0 ? (totalCo2/totalDist).toFixed(4) : 'N/A'} kg/km (BS6 norm ~0.12)
+Fuel <20% Events: ${totalFuelLow}  Mileage Loss: ${totalKmsLoss.toFixed(1)} km
+Fuel Fill: ${totalFilling}  Drain: ${totalEmptying}  Adulteration: ${totalAdult}${totalAdult > 0 ? ' ⚠️ CRITICAL' : ''}
+Odometer Resets: ${odoResets}${odoResets > 0 ? ' ⚠️ CRITICAL' : ''}
+
+--- BATTERY ---
+Bat >15V (Overcharge): ${totalBatHi} events  Bat <9V (Under-volt): ${totalBatLo} events
+
+--- CLIMATE ---
+AC Usage: ${avgAcPct.toFixed(1)}% of trip time  Altitude: ${avgAlt.toFixed(0)}m  GSM: ${avgGsm.toFixed(1)}%
+
+--- SPEED BANDS ---
+${['0_20','20_60','60_80','80_100','100_120','120_140','140_plus'].map(b => `${b.replace(/_/g,'-')}kmh: ${avg(overallData,`speed_distribution_${b}_kmh`).toFixed(1)}%`).join('  ')}
+
+--- DTC FAULTS ---
+Total: ${dtcTile?.total_dtc_count || dtcInfo.length}  Unique codes: ${uniqueDtcCodes.length}
+Active now: ${currentFaults}  History: ${histFaults}
+Last DTC: ${dtcTile?.last_dtc_code || 'None'} at ${dtcTile?.last_dtc_time || 'N/A'}
+Codes: ${dtcInfo.slice(0,15).map((d: any) => `${d.diagnosticinfo_data_dtc}(${d.diagnosticinfo_data_status}/${d.ecu || '?'})`).join(', ')}
+
+--- BASELINE vs FLEET ---
+Distance delta: ${bl.bsline_total_distance ? `${(((totalDist/n) - Number(bl.bsline_total_distance)) / Number(bl.bsline_total_distance) * 100).toFixed(1)}%` : 'N/A'}
+Speed delta: ${bl.bsline_average_speed ? `${(avgSpeed - Number(bl.bsline_average_speed)).toFixed(1)} km/h` : 'N/A'}
+Harsh Acc delta: ${bl.bsline_harsh_acc_count ? `${((totalHarshAcc/n) - Number(bl.bsline_harsh_acc_count)).toFixed(2)}/trip` : 'N/A'}
+CO2 delta: ${bl.bsline_co2_emissions ? `${((totalCo2/n) - Number(bl.bsline_co2_emissions)).toFixed(2)} kg/trip` : 'N/A'}
+=== END DATA ===
+
+Provide a comprehensive aftermarket quality analysis with these EXACT section headings:
+
+1. EXECUTIVE SUMMARY
+2. DRIVING BEHAVIOUR ANALYSIS
+3. FUEL & EFFICIENCY ANALYSIS
+4. FAULT CODE ANALYSIS
+5. MAINTENANCE RECOMMENDATIONS
+6. WARRANTY RISK ASSESSMENT
+7. SAFETY ALERTS
+8. IMPROVEMENT RECOMMENDATIONS
+
+Use automotive industry terminology. Be specific with numbers. Flag concerns with ⚠️ or 🔴.`;
 };
 
-// Gradient stops for bars — deepest to lightest teal based on rank
-const barRgb = (i: number, total: number) => {
-  const t = total > 1 ? i / (total - 1) : 0;   // 0 = highest rank, 1 = lowest
-  // From teal-700 to teal-300
-  const r = Math.round(15  + t * (94  - 15));
-  const g = Math.round(118 + t * (234 - 118));
-  const b = Math.round(110 + t * (212 - 110));
-  return `rgb(${r},${g},${b})`;
+// ─── Call AI provider ─────────────────────────────────────────────────────────
+const callAI = async (
+  provider: Provider, apiKey: string, model: string, prompt: string,
+  log: (m: string) => void
+): Promise<string> => {
+
+  if (provider === 'gemini') {
+    // Try models in order from cheapest to best, auto-fallback on quota errors
+    const modelOrder = [
+      model,                               // user-selected first
+      'gemini-2.5-flash-preview-04-17',   // best free tier
+      'gemini-2.0-flash',                  // reliable free tier
+      'gemini-2.0-flash-lite',             // cheapest free tier
+      'gemini-1.5-flash',                  // stable fallback
+      'gemini-1.5-flash-8b',              // smallest fallback
+    ].filter((m, i, a) => a.indexOf(m) === i); // dedupe
+
+    for (let attempt = 0; attempt < modelOrder.length; attempt++) {
+      const tryModel = modelOrder[attempt];
+      if (attempt > 0) log(`⏳ Retrying with ${tryModel}...`);
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent?key=${apiKey.trim()}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+          }),
+        }
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (text) { log(`✅ Success with ${tryModel}`); return text; }
+      }
+
+      const err = await res.json().catch(() => ({}));
+      const errMsg   = err?.error?.message || '';
+      const retryAfter = errMsg.match(/retry in ([0-9.]+)s/i)?.[1];
+      const is429    = res.status === 429;
+      const is404    = res.status === 404;
+
+      if (is429) {
+        // Extract which quota was hit for a clear message
+        const violations = err?.error?.details?.find((d: any) => d.violations)?.violations || [];
+        const quotaNames = violations.map((v: any) => {
+          if (v.quotaId?.includes('Day'))    return 'daily request limit';
+          if (v.quotaId?.includes('Minute')) return 'per-minute rate limit';
+          if (v.quotaId?.includes('Token'))  return 'token quota';
+          return v.quotaId || 'unknown quota';
+        }).filter(Boolean);
+
+        const quotaMsg = quotaNames.length > 0
+          ? `Quota hit: ${Array.from(new Set(quotaNames)).join(', ')}`
+          : 'Rate limit exceeded';
+
+        log(`⚠️ ${tryModel}: ${quotaMsg}${retryAfter ? ` — retry in ${retryAfter}s` : ''}`);
+
+        if (retryAfter && attempt === 0 && Number(retryAfter) < 30) {
+          log(`⏳ Waiting ${Math.ceil(Number(retryAfter))}s then retrying same model...`);
+          await new Promise(r => setTimeout(r, (Number(retryAfter) + 1) * 1000));
+          attempt--; // retry same model once
+          continue;
+        }
+
+        if (attempt < modelOrder.length - 1) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue; // try next model
+        }
+
+        // All models exhausted - give clear actionable guidance
+        throw new Error(
+          `All Gemini models quota exhausted.
+
+` +
+          `Quick fixes:
+` +
+          `① Wait a minute and try again (per-minute quota resets)
+` +
+          `② Wait until tomorrow (daily quota resets at midnight UTC)
+` +
+          `③ Get a fresh free key: aistudio.google.com/app/apikey
+` +
+          `④ Enable billing on your Google Cloud project (~₹0.01/analysis)
+
+` +
+          `Last error: ${errMsg.slice(0, 200)}`
+        );
+      }
+
+      if (is404) {
+        log(`⚠️ ${tryModel}: model not found, trying next...`);
+        continue;
+      }
+
+      // Non-quota, non-404 error - don't retry
+      throw new Error(`Gemini ${res.status}: ${errMsg.slice(0, 200) || 'Unknown error'}`);
+    }
+
+    throw new Error('No Gemini model responded successfully');
+  }
+
+  if (provider === 'claude') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey.trim(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Claude ${res.status}: ${err?.error?.message?.slice(0, 200) || 'Unknown error'}`);
+    }
+    const data = await res.json();
+    return data?.content?.[0]?.text || '';
+  }
+
+  if (provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`OpenAI ${res.status}: ${err?.error?.message?.slice(0, 200) || 'Unknown error'}`);
+    }
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || '';
+  }
+
+  throw new Error('Unknown provider');
 };
 
-const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: string }> =
-  ({ data, xKey, yKey, title }) => {
-
-  const [chartType,     setChartType]     = React.useState<ChartType>('table');
-  const [tableExpanded, setTableExpanded] = React.useState(false);
-
-  // Smooth pixel scroll state
-  const [hScroll, setHScroll] = React.useState(0);  // 0–100 for bar-v (horizontal scroll)
-  const [vScroll, setVScroll] = React.useState(0);  // 0–100 for bar-h (vertical scroll)
-  const [lScroll, setLScroll] = React.useState(0);  // 0–100 for line  (horizontal scroll)
-  const [hDrag,   setHDrag]   = React.useState(false);
-  const [vDrag,   setVDrag]   = React.useState(false);
-  const [lDrag,   setLDrag]   = React.useState(false);
-  const hRef = React.useRef<HTMLDivElement>(null);
-  const vRef = React.useRef<HTMLDivElement>(null);
-  const lRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => { setHScroll(0); setVScroll(0); setLScroll(0); }, [chartType, data]);
-
-  // Sort descending
-  const sorted = React.useMemo(
-    () => [...data].sort((a,b) => Number(b[yKey]??0) - Number(a[yKey]??0)),
-    [data, yKey]
-  );
-  const vals   = sorted.map(r => Number(r[yKey] ?? 0));
-  const vMax   = Math.max(...vals, 1);
-  const vMin   = Math.min(...vals, 0);
-  const range  = vMax - vMin || 1;
-
-  const fmt    = (n: number) => n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1000 ? `${(n/1000).toFixed(1)}k` : Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
-  const lbl    = (s: any, maxLen = 12) => { const str = String(s??''); return str.length > maxLen ? '…'+str.slice(-(maxLen-1)) : str; };
-  const fmtKey = (k: string) => k.split('_').map((w:string)=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
-
-  const scrub = (ref: React.RefObject<HTMLDivElement>, setFn: (v:number)=>void, axis: 'x'|'y') =>
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!ref.current) return;
-      const rect  = ref.current.getBoundingClientRect();
-      const ratio = axis === 'x'
-        ? Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-        : Math.max(0, Math.min(1, (e.clientY - rect.top)  / rect.height));
-      setFn(ratio * 100);
-    };
-
-  // ── "Bar" tab = VERTICAL bars ─────────────────────────────────────────────
-  const renderBarV = () => {
-    const BAR_W = 44, GAP = 12, H = 260, LBL_H = 58, PAD_L = 46, PAD_T = 20, SCRUB_H = 12;
-    const svgW      = PAD_L + sorted.length * (BAR_W + GAP) + 20;
-    const maxScroll = Math.max(0, svgW - 580);
-    const offset    = Math.round((hScroll / 100) * maxScroll);
-    const thumbW    = maxScroll > 0 ? Math.max(16, (580 / svgW) * 100) : 100;
-    const thumbL    = maxScroll > 0 ? (hScroll / 100) * (100 - thumbW) : 0;
-
-    return (
-      <div>
-        <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height: PAD_T+H+LBL_H, position:'relative' }}>
-          <svg
-            width={svgW}
-            height={PAD_T+H+LBL_H}
-            style={{ display:'block', position:'absolute', left: -offset, top:0 }}>
-            <defs>
-              <linearGradient id="gBV" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.a2}/>
-                <stop offset="100%" stopColor={C.a1}/>
-              </linearGradient>
-            </defs>
-            {/* Y-axis */}
-            <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={1.5}/>
-            {/* Y gridlines + labels — offset so they stay visible in viewport */}
-            {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
-              const y = PAD_T + H - f*H;
-              return (
-                <g key={i}>
-                  <line x1={PAD_L} y1={y} x2={svgW} y2={y}
-                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?1.5:0.8}
-                    strokeDasharray={f===0?'':'3,3'}/>
-                  <text x={PAD_L-5} y={y+3.5} textAnchor="end"
-                    fill={C.subtle} fontSize={8} fontFamily="monospace">{fmt(f*vMax)}</text>
-                </g>
-              );
-            })}
-            {/* X-axis */}
-            <line x1={PAD_L} y1={PAD_T+H} x2={svgW} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={1.5}/>
-            {/* Bars */}
-            {sorted.map((row, i) => {
-              const val  = vals[i];
-              const barH = Math.max((val/vMax)*H, 4);
-              const x    = PAD_L + i*(BAR_W+GAP) + GAP;
-              const y    = PAD_T + H - barH;
-              const clr  = barRgb(i, sorted.length);
-              return (
-                <g key={i}>
-                  <rect x={x+2} y={y+3} width={BAR_W} height={barH} rx={5} fill="rgba(0,0,0,0.05)"/>
-                  <rect x={x} y={y} width={BAR_W} height={barH} rx={5} fill={clr}>
-                    <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
-                  </rect>
-                  <rect x={x+4} y={y+3} width={BAR_W-8} height={5} rx={2.5} fill="rgba(255,255,255,0.28)"/>
-                  {barH >= 26 ? (
-                    <text x={x+BAR_W/2} y={y+15} textAnchor="middle"
-                      fill="#fff" fontSize={8} fontWeight="700">{fmt(val)}</text>
-                  ) : (
-                    <text x={x+BAR_W/2} y={y-6} textAnchor="middle"
-                      fill={C.muted} fontSize={8} fontWeight="600">{fmt(val)}</text>
-                  )}
-                  {/* VIN label — rotated, smaller font */}
-                  <text x={x+BAR_W/2} y={PAD_T+H+16} textAnchor="end"
-                    fill={C.muted} fontSize={8}
-                    transform={`rotate(-40,${x+BAR_W/2},${PAD_T+H+16})`}>
-                    {lbl(row[xKey], 13)}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* Horizontal scrubber under bar chart */}
-        {maxScroll > 0 && (
-          <div style={{ marginTop:8 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-              <span style={{ fontSize:10, color:C.subtle }}>
-                {sorted.length} VINs · scroll to see all
-              </span>
-              <span style={{ fontSize:10, color:C.subtle, fontFamily:'monospace' }}>
-                {Math.round((hScroll/100)*(sorted.length-1))+1} – {Math.min(Math.round((hScroll/100)*(sorted.length-1))+Math.floor(580/(BAR_W+GAP)), sorted.length)} shown
-              </span>
-            </div>
-            <div ref={hRef}
-              onClick={scrub(hRef, setHScroll, 'x')}
-              onMouseMove={e => { if(hDrag) scrub(hRef, setHScroll, 'x')(e); }}
-              onMouseDown={() => setHDrag(true)}
-              onMouseUp={() => setHDrag(false)}
-              onMouseLeave={() => setHDrag(false)}
-              style={{ position:'relative', height:SCRUB_H, background:C.border,
-                borderRadius:SCRUB_H/2, cursor:'ew-resize', userSelect:'none' }}>
-              <div style={{ position:'absolute', left:0, top:0, height:'100%',
-                width:`${thumbL+thumbW}%`, background:`${C.a1}18`, borderRadius:SCRUB_H/2 }}/>
-              <div style={{ position:'absolute', top:0, height:'100%',
-                left:`${thumbL}%`, width:`${thumbW}%`, borderRadius:SCRUB_H/2,
-                background:`linear-gradient(90deg,${C.a1},${C.a2})`,
-                boxShadow:`0 2px 8px ${C.a1}55`,
-                transition: hDrag ? 'none' : 'left 0.1s ease',
-                cursor:'ew-resize', display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
-                {[0,1,2].map(j => (
-                  <div key={j} style={{ width:1.5, height:SCRUB_H-4, background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ── "Horiz" tab = HORIZONTAL bars (values on X axis, VINs on Y axis)
-  //    Bars go left-to-right, VIN labels on the left
-  //    Scrubber: vertical bar on the right side (scroll up/down through VINs)
-  // ─────────────────────────────────────────────────────────────────────────
-  const renderBarH = () => {
-    const ROW_H = 38, GAP = 8, LABEL_W = 140, BAR_AREA = 380, VAL_W = 64;
-    const SVG_W     = LABEL_W + BAR_AREA + VAL_W;
-    const viewport  = 380;  // visible height in px
-    const totalH    = sorted.length * (ROW_H + GAP);
-    const maxScroll = Math.max(0, totalH - viewport);
-    const offset    = Math.round((vScroll / 100) * maxScroll);
-    const thumbH    = maxScroll > 0 ? Math.max(24, (viewport / totalH) * 100) : 100;
-    const thumbT    = maxScroll > 0 ? (vScroll / 100) * (100 - thumbH) : 0;
-    const SCRUB_W   = 14;
-
-    return (
-      <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
-        {/* Chart */}
-        <div style={{ flex:1, overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height:viewport, position:'relative' }}>
-          <svg
-            width={SVG_W}
-            height={sorted.length * (ROW_H + GAP)}
-            style={{ display:'block', position:'absolute', top:-offset, left:0 }}>
-            <defs>
-              <linearGradient id="gBH" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor={C.a1}/>
-                <stop offset="100%" stopColor={C.a3}/>
-              </linearGradient>
-            </defs>
-            {/* X gridlines (follow viewport vertically) */}
-            {[0,0.25,0.5,0.75,1].map((f,i) => {
-              const x = LABEL_W + f*BAR_AREA;
-              return (
-                <g key={i}>
-                  <line x1={x} y1={offset} x2={x} y2={offset+viewport}
-                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
-                    strokeDasharray={f===0?'':'4,4'}/>
-                </g>
-              );
-            })}
-            {/* Rows */}
-            {sorted.map((row, i) => {
-              const val   = vals[i];
-              const barW  = Math.max((val/vMax)*BAR_AREA, 6);
-              const y     = i*(ROW_H+GAP);
-              const clr   = barRgb(i, sorted.length);
-              return (
-                <g key={i}>
-                  {/* Rank */}
-                  <text x={10} y={y+ROW_H/2+4} fill={C.subtle} fontSize={11}
-                    fontWeight="800" fontFamily="monospace">{String(i+1).padStart(2,'0')}</text>
-                  {/* VIN label */}
-                  <text x={LABEL_W-10} y={y+ROW_H/2+4} textAnchor="end"
-                    fill={C.slate} fontSize={10} fontWeight="500">{lbl(row[xKey], 16)}</text>
-                  {/* Track */}
-                  <rect x={LABEL_W} y={y+5} width={BAR_AREA} height={ROW_H-10}
-                    fill="#e0f2f1" rx={5}/>
-                  {/* Bar */}
-                  <rect x={LABEL_W} y={y+5} width={barW} height={ROW_H-10}
-                    fill={clr} rx={5}>
-                    <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
-                  </rect>
-                  {/* Top highlight on bar */}
-                  <rect x={LABEL_W+3} y={y+7} width={Math.max(barW-6,0)} height={5}
-                    rx={3} fill="rgba(255,255,255,0.35)"/>
-                  {/* Value */}
-                  <text x={LABEL_W+barW+8} y={y+ROW_H/2+4}
-                    fill={C.a1} fontSize={9} fontWeight="700" fontFamily="monospace">{fmt(val)}</text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* Vertical scrubber on the right */}
-        {maxScroll > 0 && (
-          <div style={{ width:SCRUB_W, alignSelf:'stretch', display:'flex',
-            flexDirection:'column', paddingTop:4, paddingBottom:4 }}>
-            <div ref={vRef}
-              onClick={scrub(vRef, setVScroll, 'y')}
-              onMouseMove={e => { if(vDrag) scrub(vRef, setVScroll, 'y')(e); }}
-              onMouseDown={() => setVDrag(true)}
-              onMouseUp={() => setVDrag(false)}
-              onMouseLeave={() => setVDrag(false)}
-              style={{ flex:1, position:'relative', background:C.border,
-                borderRadius:SCRUB_W/2, cursor:'ns-resize', userSelect:'none' }}>
-              <div style={{ position:'absolute', left:0, top:0, right:0,
-                height:`${thumbT+thumbH}%`, background:`${C.a1}18`, borderRadius:SCRUB_W/2 }}/>
-              <div style={{ position:'absolute', left:0, right:0,
-                top:`${thumbT}%`, height:`${thumbH}%`, minHeight:24,
-                borderRadius:SCRUB_W/2,
-                background:`linear-gradient(180deg,${C.a2},${C.a1})`,
-                boxShadow:`0 2px 8px ${C.a1}55`,
-                transition: vDrag ? 'none' : 'top 0.1s ease',
-                cursor:'ns-resize', display:'flex', flexDirection:'column',
-                alignItems:'center', justifyContent:'center', gap:2 }}>
-                {[0,1,2].map(j => (
-                  <div key={j} style={{ width:SCRUB_W-4, height:1.5,
-                    background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ── Line chart with horizontal scrubber ──────────────────────────────────
-  const renderLine = () => {
-    const PAD_L=54, PAD_T=24, PAD_B=56, PAD_R=24, H=260, SCRUB_H=12;
-    const viewport  = 580;
-    const DOT_STEP  = 28;                                     // px per data point — gives labels room
-    const totalW    = PAD_L + sorted.length * DOT_STEP + PAD_R;
-    const maxScroll = Math.max(0, totalW - viewport);
-    const offset    = Math.round((lScroll / 100) * maxScroll);
-    const thumbW    = maxScroll > 0 ? Math.max(16, (viewport / totalW) * 100) : 100;
-    const thumbL    = maxScroll > 0 ? (lScroll / 100) * (100 - thumbW) : 0;
-    const cW        = totalW - PAD_L - PAD_R;
-
-    const pts = sorted.map((row, i) => ({
-      x: PAD_L + (sorted.length > 1 ? (i/(sorted.length-1))*cW : cW/2),
-      y: PAD_T + H - ((vals[i]-vMin)/range)*H,
-      val: vals[i],
-      label: String(row[xKey] ?? ''),
-    }));
-    const pathD = pts.map((p,i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    const areaD = pts.length > 1
-      ? `${pathD} L${pts[pts.length-1].x.toFixed(1)},${PAD_T+H} L${PAD_L},${PAD_T+H} Z`
-      : '';
-
-    return (
-      <div>
-        <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height:PAD_T+H+PAD_B, position:'relative' }}>
-          <svg
-            width={totalW}
-            height={PAD_T+H+PAD_B}
-            style={{ display:'block', position:'absolute', left:-offset, top:0 }}>
-            <defs>
-              <linearGradient id="gLA" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.a2} stopOpacity="0.25"/>
-                <stop offset="100%" stopColor={C.a2} stopOpacity="0.02"/>
-              </linearGradient>
-            </defs>
-            {/* Y-axis */}
-            <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={1.5}/>
-            {/* Y grid + labels */}
-            {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
-              const y = PAD_T + H - f*H;
-              return (
-                <g key={i}>
-                  <line x1={PAD_L} y1={y} x2={totalW} y2={y}
-                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?1.5:0.8}
-                    strokeDasharray={f===0?'':'3,3'}/>
-                  <text x={PAD_L-5} y={y+3.5} textAnchor="end"
-                    fill={C.subtle} fontSize={8} fontFamily="monospace">
-                    {fmt(vMin + f*range)}
-                  </text>
-                </g>
-              );
-            })}
-            {/* X-axis */}
-            <line x1={PAD_L} y1={PAD_T+H} x2={totalW} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={1.5}/>
-            {/* Area */}
-            {pts.length > 1 && <path d={areaD} fill="url(#gLA)"/>}
-            {/* Line */}
-            {pts.length > 1 && (
-              <path d={pathD} fill="none" stroke={C.a1} strokeWidth={2.5}
-                strokeLinejoin="round" strokeLinecap="round"/>
-            )}
-            {/* Dots + labels */}
-            {pts.map((p,i) => (
-              <g key={i}>
-                {/* Vertical tick */}
-                <line x1={p.x} y1={PAD_T+H} x2={p.x} y2={PAD_T+H+6}
-                  stroke={C.border} strokeWidth={1}/>
-                {/* Dot */}
-                <circle cx={p.x} cy={p.y} r={5} fill={C.bgCard} stroke={C.a1} strokeWidth={2.5}>
-                  <title>{`#${i+1} ${p.label}: ${p.val.toLocaleString()}`}</title>
-                </circle>
-                {/* Value above dot — only show when DOT_STEP is wide enough */}
-                <text x={p.x} y={p.y-10} textAnchor="middle"
-                  fill={C.a1} fontSize={7.5} fontWeight="700">{fmt(p.val)}</text>
-                {/* X label rotated */}
-                <text x={p.x} y={PAD_T+H+16} textAnchor="end"
-                  fill={C.muted} fontSize={7.5}
-                  transform={`rotate(-40,${p.x},${PAD_T+H+16})`}>{lbl(p.label, 13)}</text>
-              </g>
-            ))}
-          </svg>
-        </div>
-
-        {/* Horizontal scrubber for line chart */}
-        {maxScroll > 0 && (
-          <div style={{ marginTop:8 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-              <span style={{ fontSize:10, color:C.subtle }}>{sorted.length} data points</span>
-              <span style={{ fontSize:10, color:C.subtle }}>drag to scroll →</span>
-            </div>
-            <div ref={lRef}
-              onClick={scrub(lRef, setLScroll, 'x')}
-              onMouseMove={e => { if(lDrag) scrub(lRef, setLScroll, 'x')(e); }}
-              onMouseDown={() => setLDrag(true)}
-              onMouseUp={() => setLDrag(false)}
-              onMouseLeave={() => setLDrag(false)}
-              style={{ position:'relative', height:SCRUB_H, background:C.border,
-                borderRadius:SCRUB_H/2, cursor:'ew-resize', userSelect:'none' }}>
-              <div style={{ position:'absolute', left:0, top:0, height:'100%',
-                width:`${thumbL+thumbW}%`, background:`${C.a1}18`, borderRadius:SCRUB_H/2 }}/>
-              <div style={{ position:'absolute', top:0, height:'100%',
-                left:`${thumbL}%`, width:`${thumbW}%`, borderRadius:SCRUB_H/2,
-                background:`linear-gradient(90deg,${C.a1},${C.a2})`,
-                boxShadow:`0 2px 8px ${C.a1}55`,
-                transition: lDrag ? 'none' : 'left 0.1s ease',
-                cursor:'ew-resize', display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
-                {[0,1,2].map(j => (
-                  <div key={j} style={{ width:1.5, height:SCRUB_H-4, background:'rgba(255,255,255,0.8)', borderRadius:1 }}/>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ── Table ─────────────────────────────────────────────────────────────────
-  const renderTable = () => {
-    const keys    = Object.keys(sorted[0] || {});
-    const visible = tableExpanded ? sorted : sorted.slice(0, 10);
-    return (
-      <div>
-        <div style={{ overflowX:'auto', borderRadius:8, border:`1px solid ${C.border}` }}>
-          <table style={{ borderCollapse:'collapse', width:'100%', fontSize:13 }}>
-            <thead>
-              <tr style={{ background:C.bgHead }}>
-                <th style={{ padding:'10px 12px', textAlign:'left', color:C.muted,
-                  fontWeight:700, fontSize:11, textTransform:'uppercase', letterSpacing:0.6,
-                  borderBottom:`2px solid ${C.border}`, width:36 }}>#</th>
-                {keys.map(k => (
-                  <th key={k} style={{ padding:'10px 16px', textAlign:'left', color:C.muted,
-                    fontWeight:700, fontSize:11, textTransform:'uppercase', letterSpacing:0.6,
-                    whiteSpace:'nowrap', borderBottom:`2px solid ${C.border}` }}>{fmtKey(k)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((row, i) => (
-                <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,
-                  background: i%2===0 ? C.bgCard : C.bg }}>
-                  <td style={{ padding:'9px 12px', color:C.subtle, fontSize:11,
-                    fontFamily:'monospace', fontWeight:700 }}>
-                    {(i+1).toString().padStart(2,'0')}
-                  </td>
-                  {keys.map(k => (
-                    <td key={k} style={{ padding:'9px 16px', color:C.slate, fontSize:13 }}>
-                      {typeof row[k] === 'number'
-                        ? <span style={{ fontFamily:'monospace', fontWeight:700, color:C.a1 }}>
-                            {row[k].toLocaleString()}
-                          </span>
-                        : row[k] ?? '—'}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {sorted.length > 10 && (
-          <button onClick={() => setTableExpanded(e => !e)}
-            style={{ marginTop:10, background:'none', border:`1px solid ${C.a1}44`,
-              borderRadius:8, color:C.a1, fontSize:12, padding:'6px 16px',
-              cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s' }}>
-            {tableExpanded ? '▲ Show less' : `▼ Show all ${sorted.length} rows`}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  // ── Summary stats ─────────────────────────────────────────────────────────
-  const total = vals.reduce((a:number,b:number)=>a+b,0);
-  const avg   = total / (vals.length||1);
-  const stats = [
-    { label:'Total',   value:fmt(total),     sub:'' },
-    { label:'Average', value:fmt(avg),        sub:'' },
-    { label:'Max',     value:fmt(vals[0]||0), sub:lbl(sorted[0]?.[xKey]||'',14) },
-    { label:'Min',     value:fmt(vals[vals.length-1]||0), sub:lbl(sorted[sorted.length-1]?.[xKey]||'',14) },
-    { label:'Records', value:data.length.toLocaleString(), sub:'' },
+// ─── Parse sections ───────────────────────────────────────────────────────────
+const parseSections = (text: string): AnalysisSection[] => {
+  const defs = [
+    { key: 'EXECUTIVE SUMMARY',        icon: '📋', title: 'Executive Summary' },
+    { key: 'DRIVING BEHAVIOUR',        icon: '🏎️', title: 'Driving Behaviour Analysis' },
+    { key: 'FUEL & EFFICIENCY',        icon: '⛽', title: 'Fuel & Efficiency Analysis' },
+    { key: 'FAULT CODE',               icon: '🔴', title: 'Fault Code Analysis' },
+    { key: 'MAINTENANCE',              icon: '🔧', title: 'Maintenance Recommendations' },
+    { key: 'WARRANTY',                 icon: '🛡️', title: 'Warranty Risk Assessment' },
+    { key: 'SAFETY',                   icon: '⚠️', title: 'Safety Alerts' },
+    { key: 'IMPROVEMENT',              icon: '📈', title: 'Improvement Recommendations' },
   ];
 
-  const TABS = [
-    { type:'table' as ChartType, icon:'⊞', label:'Table'  },
-    { type:'bar-v' as ChartType, icon:'▐▐', label:'Bar'   },
-    { type:'bar-h' as ChartType, icon:'≡≡', label:'Horiz' },
-    { type:'line'  as ChartType, icon:'∿',  label:'Line'  },
-  ];
+  const sections: AnalysisSection[] = [];
+  defs.forEach((def, i) => {
+    const si = text.search(new RegExp(def.key, 'i'));
+    if (si === -1) return;
+    const next = defs.slice(i + 1).find(d => text.search(new RegExp(d.key, 'i')) > si);
+    const ei   = next ? text.search(new RegExp(next.key, 'i')) : text.length;
+    const content = text.slice(si, ei).trim();
+    const severity: AnalysisSection['severity'] =
+      content.includes('🔴') || /critical|immediate/i.test(content) ? 'critical'
+      : content.includes('⚠️') || /warning|concern|risk/i.test(content) ? 'warning'
+      : /good|normal|excellent|compliant/i.test(content) ? 'good'
+      : 'info';
+    sections.push({ title: def.title, icon: def.icon, content, severity });
+  });
+  if (sections.length === 0)
+    sections.push({ title: 'Vehicle Analysis', icon: '🤖', content: text, severity: 'info' });
+  return sections;
+};
+
+const sevStyle = (s: AnalysisSection['severity']) => ({
+  good:     { border: '#a5d6a7', bg: '#f1f8e9', badge: '#2e7d32', badgeBg: '#e8f5e9' },
+  warning:  { border: '#ffe082', bg: '#fffde7', badge: '#f57f17', badgeBg: '#fff9c4' },
+  critical: { border: '#ef9a9a', bg: '#ffebee', badge: '#c62828', badgeBg: '#ffcdd2' },
+  info:     { border: '#90caf9', bg: '#e3f2fd', badge: '#1565c0', badgeBg: '#bbdefb' },
+}[s]);
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+const AiAnalysisDashboard: FC = () => {
+  const { vin, apiParams } = useDt();
+
+  // Provider state
+  const [provider,   setProvider]   = useState<Provider>('openai');
+  const [keys,       setKeys]       = useState<Record<Provider, string>>({
+    gemini:  process.env.REACT_APP_GEMINI_KEY || '',
+    claude:  '',
+    openai:  process.env.REACT_APP_OPENAI_KEY || '',
+  });
+  const [models,     setModels]     = useState<Record<Provider, string>>({
+    gemini: 'gemini-2.5-flash-preview-04-17',
+    claude: 'claude-sonnet-4-5',
+    openai: 'gpt-4o-mini',
+  });
+  const [showKeys, setShowKeys]     = useState<Record<Provider, boolean>>({ gemini: false, claude: false, openai: false });
+
+  // Analysis state
+  const [loading,    setLoading]    = useState(false);
+  const [sections,   setSections]   = useState<AnalysisSection[]>([]);
+  const [rawResponse,setRaw]        = useState('');
+  const [error,      setError]      = useState('');
+  const [dataStatus, setDataStatus] = useState<string[]>([]);
+  const [progress,   setProgress]   = useState(0);
+  const [trigger,    setTrigger]    = useState(0);
+  const [expandedSections, setExpandedSections] = useState<Record<number, boolean>>({ 0: true });
+
+  const cfg  = PROVIDERS.find(p => p.id === provider)!;
+  const log  = (msg: string) => setDataStatus(prev => [...prev, msg]);
+
+  const updateKey   = (p: Provider, v: string) => setKeys(k   => ({ ...k, [p]: v }));
+  const updateModel = (p: Provider, v: string) => setModels(m => ({ ...m, [p]: v }));
+
+  const runAnalysis = useCallback(async () => {
+    const key = keys[provider].trim();
+    if (!key) { setError(`Please enter your ${cfg.name} API key.`); return; }
+
+    setLoading(true); setError(''); setSections([]); setRaw(''); setDataStatus([]); setProgress(0);
+
+    try {
+      log('📡 Fetching all vehicle data...');
+      const [viR, usR, odR, dtcR, dtcTR, feR, blR, kpiR] = await Promise.allSettled([
+        fetchVehicleInfo(vin),
+        fetchVehicleUsage({ vin: apiParams.vin, startdate: apiParams.startdate, enddate: apiParams.enddate }),
+        fetchOverallData(apiParams),
+        fetchDtcInfo(apiParams),
+        fetchDtcTile(apiParams),
+        fetchFuelEvents(apiParams),
+        fetchSummaryBaselineTile(apiParams),
+        fetchOverallKpiData(apiParams),
+      ]);
+
+      const vi  = viR.status  === 'fulfilled' ? (Array.isArray(viR.value)  ? viR.value[0]  : viR.value)  : null;
+      const us  = usR.status  === 'fulfilled' ? (Array.isArray(usR.value)  ? usR.value[0]  : usR.value)  : null;
+      const od  = odR.status  === 'fulfilled' ? (Array.isArray(odR.value)  ? odR.value     : []) : [];
+      const di  = dtcR.status === 'fulfilled' ? (Array.isArray(dtcR.value) ? dtcR.value    : []) : [];
+      const dt  = dtcTR.status=== 'fulfilled' ? (Array.isArray(dtcTR.value)? dtcTR.value[0]: dtcTR.value): null;
+      const fe  = feR.status  === 'fulfilled' ? (Array.isArray(feR.value)  ? feR.value     : []) : [];
+      const bl  = blR.status  === 'fulfilled' ? (Array.isArray(blR.value)  ? blR.value[0]  : blR.value)  : null;
+      const kpi = kpiR.status === 'fulfilled' ? (Array.isArray(kpiR.value) ? kpiR.value    : []) : [];
+
+      log(`✅ ${od.length} trips · ${di.length} DTCs · ${fe.length} fuel events`);
+      setProgress(40);
+
+      log(`🧠 Building analysis prompt...`);
+      const prompt = buildPrompt(vin, apiParams.startdate, apiParams.enddate, vi, us, od, di, dt, fe, bl, kpi);
+      setProgress(50);
+
+      log(`🤖 Sending to ${cfg.name} — ${models[provider]}...`);
+      const responseText = await callAI(provider, key, models[provider], prompt, log);
+      setProgress(90);
+
+      if (!responseText) throw new Error('Empty response — try again');
+      log(`✅ Analysis complete (${responseText.length.toLocaleString()} chars)`);
+      setProgress(100);
+
+      setSections(parseSections(responseText));
+      setRaw(responseText);
+    } catch (e: any) {
+      setError(e.message || 'Analysis failed');
+      log(`❌ ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [vin, apiParams, provider, keys, models, cfg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const testConnection = async () => {
+    const key = keys[provider].trim();
+    if (!key) { setError(`Enter your ${cfg.name} API key first.`); return; }
+    setDataStatus(['🔌 Testing connection...']);
+    setError('');
+    try {
+      let ok = false;
+      if (provider === 'gemini') {
+        const testModel = models.gemini || 'gemini-2.0-flash-lite';
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${key}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with just the word OK.' }] }], generationConfig: { maxOutputTokens: 10 } }) }
+        );
+        ok = res.ok;
+        if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(`${res.status}: ${e?.error?.message?.slice(0,120) || 'error'}`); }
+      } else if (provider === 'claude') {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+          body: JSON.stringify({ model: models.claude, max_tokens: 10, messages: [{ role:'user', content:'Reply OK.' }] })
+        });
+        ok = res.ok;
+        if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(`${res.status}: ${e?.error?.message?.slice(0,120) || 'error'}`); }
+      } else if (provider === 'openai') {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json','Authorization':`Bearer ${key}` },
+          body: JSON.stringify({ model: models.openai, max_tokens: 10, messages: [{ role:'user', content:'Reply OK.' }] })
+        });
+        ok = res.ok;
+        if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(`${res.status}: ${e?.error?.message?.slice(0,120) || 'error'}`); }
+      }
+      if (ok) setDataStatus([`✅ ${cfg.name} connection successful — ${models[provider]} is ready`]);
+    } catch(e: any) {
+      setDataStatus([`❌ Connection failed: ${e.message}`]);
+      setError(e.message);
+    }
+  };
+
+  const downloadTxt = () => {
+    const hdr = `VEHICLE DIGITAL TWIN — AI ANALYSIS REPORT\n${'='.repeat(60)}\nVIN: ${vin}\nPeriod: ${apiParams.startdate} to ${apiParams.enddate}\nProvider: ${cfg.name} · Model: ${models[provider]}\nGenerated: ${new Date().toLocaleString()}\n${'='.repeat(60)}\n\n`;
+    const blob = new Blob([hdr + rawResponse], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.download = `AI_Analysis_${vin}_${apiParams.startdate}.txt`;
+    a.href = url; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // ── Styles ──────────────────────────────────────────────────────────────────
+  const page: React.CSSProperties = { padding: '20px 24px', background: '#f7f8fa', minHeight: '100vh', width: '100%', boxSizing: 'border-box' as const };
+  const sec:  React.CSSProperties = { color: '#e91e8c', fontWeight: 800, fontSize: 15, marginBottom: 14, textTransform: 'uppercase' as const, letterSpacing: 0.5, borderLeft: '4px solid #e91e8c', paddingLeft: 10 };
 
   return (
-    <div style={{ marginTop:12, background:C.bgCard, borderRadius:14,
-      border:`1px solid ${C.border}`, boxShadow:'0 4px 24px rgba(15,118,110,0.10)',
-      overflow:'hidden', fontFamily:'inherit' }}>
-
-      {/* Header */}
-      <div style={{ padding:'14px 18px', borderBottom:`1px solid ${C.border}`,
-        background:`linear-gradient(135deg,${C.bgHead},${C.bgCard})`,
-        display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
-        <div>
-          {title && <div style={{ fontSize:13, fontWeight:700, color:C.a1 }}>{title}</div>}
-          <div style={{ fontSize:11, color:C.subtle, marginTop:2 }}>
-            {data.length.toLocaleString()} records · sorted highest → lowest · {fmtKey(xKey)} vs {fmtKey(yKey)}
-          </div>
+    <div style={page} id="dt-page-content">
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      {/* ── Page header ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+        <div style={{
+          width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+          background: 'linear-gradient(135deg,#e91e8c,#c2185b)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 16px rgba(233,30,140,0.30)',
+        }}>
+          <svg viewBox='0 0 24 24' width='24' height='24' fill='#fff'>
+            <path d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z'/>
+          </svg>
         </div>
-        <div style={{ display:'flex', gap:2, background:C.bg, borderRadius:10,
-          padding:3, border:`1px solid ${C.border}` }}>
-          {TABS.map(tab => (
-            <button key={tab.type}
-              onClick={() => { setChartType(tab.type); setTableExpanded(false); }}
-              style={{ padding:'5px 12px', borderRadius:8, border:'none', cursor:'pointer',
-                fontSize:12, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s',
-                background: chartType===tab.type ? C.a1 : 'transparent',
-                color:       chartType===tab.type ? '#fff' : C.muted,
-                boxShadow:   chartType===tab.type ? `0 2px 8px ${C.a1}55` : 'none',
-                display:'flex', alignItems:'center', gap:5 }}>
-              <span style={{ fontSize:10 }}>{tab.icon}</span>{tab.label}
+        <div>
+          <h1 style={{ color: '#111', fontWeight: 900, fontSize: 24, margin: 0, lineHeight: 1.1 }}>Vehicle Analysis</h1>
+          <p style={{ color: '#888', fontSize: 13, margin: '3px 0 0', fontWeight: 400 }}>
+            AI-powered comprehensive vehicle telematics analysis
+          </p>
+        </div>
+      </div>
+
+      <DateFilterBar title="Vehicle Analysis" onApply={() => setTrigger(prev => prev + 1)} />
+
+      {/* ── AI Provider selector ── */}
+      <div style={{ background: '#fff', borderRadius: 14, padding: '20px 24px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', marginBottom: 20 }}>
+        <div style={sec}>🤖 AI Provider</div>
+
+        {/* Provider tabs */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' as const }}>
+          {PROVIDERS.map(p => (
+            <button key={p.id} onClick={() => setProvider(p.id)} style={{
+              padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: 14,
+              cursor: 'pointer', transition: 'all 0.15s',
+              border: `2px solid ${provider === p.id ? p.color : '#e0e0e0'}`,
+              background: provider === p.id ? p.color : '#f9f9f9',
+              color: provider === p.id ? '#fff' : '#444',
+              boxShadow: provider === p.id ? `0 4px 16px ${p.color}44` : 'none',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: 16 }}>{p.icon}</span>
+              {p.name}
+              {p.id === 'gemini' && keys.gemini && <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.3)', padding: '1px 6px', borderRadius: 10 }}>Key set</span>}
+              {p.id === 'claude' && keys.claude && <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.3)', padding: '1px 6px', borderRadius: 10 }}>Key set</span>}
+              {p.id === 'openai' && keys.openai && <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.3)', padding: '1px 6px', borderRadius: 10 }}>Key set</span>}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Stats row */}
-      <div style={{ display:'flex', borderBottom:`1px solid ${C.border}`, background:C.bg }}>
-        {stats.map((s,i) => (
-          <div key={i} style={{ flex:1, padding:'8px 14px',
-            borderRight: i<stats.length-1 ? `1px solid ${C.border}` : '' }}>
-            <div style={{ fontSize:10, color:C.subtle, textTransform:'uppercase',
-              letterSpacing:0.5, fontWeight:600 }}>{s.label}</div>
-            <div style={{ fontSize:16, fontWeight:800, color:C.a1,
-              lineHeight:1.2, fontFamily:'monospace' }}>{s.value}</div>
-            {s.sub && <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>{s.sub}</div>}
-          </div>
-        ))}
-      </div>
-
-      {/* Chart area */}
-      <div style={{ padding:'16px 18px 14px' }}>
-        {chartType === 'table' && renderTable()}
-        {chartType === 'bar-v' && renderBarV()}
-        {chartType === 'bar-h' && renderBarH()}
-        {chartType === 'line'  && renderLine()}
-      </div>
-    </div>
-  );
-};
-
-
-const AiAnalysisDashboard = () => {
-  const { vin, apiParams } = useDt();
-  const { token, user }    = useSelector((state: any) => state.auth);
-
-  const [inputText,        setInputText]        = useState('');
-  const [responses,        setResponses]        = useState<any[]>([]);
-  const [loading,          setLoading]          = useState(false);
-  const [selectedSuggestion, setSelectedSuggestion] = useState<string>('');
-  const [questionHistory,  setQuestionHistory]  = useState<HistoryItem[]>([]);
-  const [historyOpen,      setHistoryOpen]      = useState(true);
-  const [hoveredIndex,     setHoveredIndex]     = useState<number | null>(null);
-  const [hoveredIndex1,    setHoveredIndex1]    = useState<number | null>(null);
-  const [hoveredIndex2,    setHoveredIndex2]    = useState<number | null>(null);
-  const [sessionId,        setSessionId]        = useState<string | null>(null);
-  const [,                 setTrigger]          = useState(0);
-
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [responses, loading]);
-
-  // ── Session ID — same pattern as fleet copilot ───────────────────────────────
-  useEffect(() => {
-    const userId = user?.user?.id || user?.user?.userId;
-    if (!userId) return;
-    const sessionKey  = `dt_session_${userId}`;
-    const loginKey    = `dt_login_user`;
-    const lastLogin   = localStorage.getItem(loginKey);
-    let   savedSid    = localStorage.getItem(sessionKey);
-    if (!savedSid || lastLogin !== userId.toString()) {
-      savedSid = `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-      localStorage.setItem(sessionKey, savedSid);
-      localStorage.setItem(loginKey, userId.toString());
-    }
-    setSessionId(savedSid);
-  }, [user]);
-
-  // ── Chat history — same pattern as fleet copilot ─────────────────────────────
-  useEffect(() => {
-    const fetchChatHistory = async () => {
-      try {
-        const userId = user?.user?.id || user?.user?.userId;
-        if (!userId) return;
-        const spaceKey = user?.user?.spaceKey;
-        const res = await fetch(
-          `/rest-proxy/vc_chat_history_older?user_id=${userId}`,
-          {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              clientid:     `VTBPJEQBEEDBEQSHIXDJ@${spaceKey}`,
-              appname:      'valcode_demo_api',
-              clientsecret: 'ESUKBCLCYETVMHAZPQXW1760338574796',
-            },
-          }
-        );
-        if (!res.ok) return;
-        const text = await res.text();
-        const data = (text.startsWith('{') || text.startsWith('[')) ? JSON.parse(text) : [];
-        setQuestionHistory(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error('Error fetching chat history:', err);
-      }
-    };
-    fetchChatHistory();
-  }, [user]);
-
-  // ── Load history detail — same pattern as fleet copilot ──────────────────────
-  const fetchHistoryDetail = async (userId: string, historySessionId: string) => {
-    setLoading(true);
-    try {
-      const spaceKey = user?.user?.spaceKey;
-      const res = await fetch(
-        `/rest-proxy/vc_chat_history?user_id=${userId}&session_id=${historySessionId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            clientid:     `VTBPJEQBEEDBEQSHIXDJ@${spaceKey}`,
-            appname:      'valcode_demo_api',
-            clientsecret: 'ESUKBCLCYETVMHAZPQXW1760338574796',
-          },
-        }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-
-      // Parse history responses — same double-parse pattern as fleet copilot
-      const parsedResponses = data.map((item: any) => {
-        let firstParsed: any = {};
-        try { firstParsed = JSON.parse(item.response); }
-        catch { firstParsed = { response: item.response }; }
-
-        let finalParsed: any = {};
-        try { finalParsed = JSON.parse(firstParsed.response); }
-        catch { finalParsed = firstParsed; }
-
-        const { tableHTML, suggestionList } = buildResponseParts(finalParsed);
-        const chartConfig = extractChart(finalParsed);
-        const cleanedResponse = buildHtmlResponse(tableHTML, finalParsed, !!chartConfig);
-        return { question: item.question, htmlResponse: cleanedResponse, suggestions: suggestionList, chart: chartConfig };
-      });
-
-      setResponses(parsedResponses);
-      setSessionId(historySessionId);
-    } catch (err) {
-      console.error('Error fetching history detail:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Safe data parser — identical to fleet copilot ────────────────────────────
-  const safeParseData = (data: any): any[] => {
-    if (!data) return [];
-    try {
-      if (Array.isArray(data)) return data;
-      if (typeof data === 'object') return [data];
-      if (typeof data === 'string') {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed)) return parsed;
-        if (typeof parsed === 'object') return [parsed];
-      }
-    } catch (err) {
-      console.warn('safeParseData: Unable to parse data field', err);
-    }
-    return [];
-  };
-
-  // ── Build table HTML — identical to fleet copilot ────────────────────────────
-  const buildTableHTML = (parsedData: any[]): string => {
-    if (!parsedData.length) return '';
-    const keys = Object.keys(parsedData[0]);
-    const headers = keys.map(k => {
-      const formatted = k.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      return `<th style="padding:6px; border:1px solid #dde; text-align:left; color:#555577; background:#f5f5ff; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">${formatted}</th>`;
-    }).join('');
-    const rows = parsedData.map(row =>
-      `<tr style="border-bottom:1px solid #eef;">${keys.map(k =>
-        `<td style="padding:8px 13px; color:#333344; font-size:13px;">${row[k] ?? '—'}</td>`
-      ).join('')}</tr>`
-    ).join('');
-    return `<div style="margin-top:14px; overflow-x:auto; border-radius:10px; border:1px solid #dde;">
-      <table style="border-collapse:collapse; width:100%; font-size:13px;">
-        <thead><tr style="background:#f5f5ff;">${headers}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>`;
-  };
-
-  // ── Build response parts — same logic as fleet copilot ───────────────────────
-  const buildResponseParts = (parsedResponse: any) => {
-    const parsedData  = safeParseData(parsedResponse?.data);
-    const tableHTML   = buildTableHTML(parsedData);
-    let suggestionList: string[] = [];
-    const rawSugg = parsedResponse?.visualization?.Suggestions || parsedResponse?.visualization?.suggestions;
-    if (rawSugg) {
-      suggestionList = Array.isArray(rawSugg)
-        ? rawSugg
-        : String(rawSugg).split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
-    return { tableHTML, suggestionList };
-  };
-
-  const buildHtmlResponse = (tableHTML: string, parsedResponse: any, hasChart: boolean = false): string => {
-    const viz = parsedResponse?.visualization || {};
-    // When DataViz renders, skip the duplicate table — show text analysis only
-    const tableSection = hasChart ? '' : tableHTML;
-    return `<div style="font-family: inherit; line-height: 1.75; color: #334155;">
-      ${tableSection}
-      ${viz.Answer   || viz.answer   || ''}
-      ${viz.Analysis || viz.analysis || ''}
-      ${parsedResponse?.explanation ? `<p style="color:#94a3b8; font-style:italic; font-size:13px; margin-top:10px; padding-top:10px; border-top:1px solid #f1f5f9;">${parsedResponse.explanation}</p>` : ''}
-    </div>`;
-  };
-
-  // Extract chart config from parsed response for rendering
-  const extractChart = (parsedResponse: any): { data: any[]; xKey: string; yKey: string; title: string } | null => {
-    const rows = safeParseData(parsedResponse?.data);
-    const viz  = parsedResponse?.visualization || {};
-    if (!rows.length) return null;
-    const xKey = viz.x_axis || Object.keys(rows[0])[0];
-    const yKey = viz.y_axis || Object.keys(rows[0])[1];
-    if (!yKey || !rows.some((r: any) => typeof r[yKey] === 'number')) return null;
-    return { data: rows, xKey, yKey, title: viz.chart_title || '' };
-  };
-
-  // ── handleSend — modelled exactly on fleet copilot ───────────────────────────
-  const handleSend = async (customText?: string) => {
-    const textToSend = customText || inputText;
-    if (!textToSend.trim()) return;
-
-    setLoading(true);
-    try {
-      setQuestionHistory(prev => [
-        { context: textToSend, session_id: sessionId || 'new' },
-        ...prev,
-      ]);
-
-      const userId   = user?.user?.id || user?.user?.userId;
-      const spaceKey = user?.user?.spaceKey;
-      const authToken = token;
-
-      // Headers must match the working curl from platform.ravity.io/newGenAi/
-      // origin and referer are set to platform.ravity.io — BizWiz may validate these
-      const headers: Record<string, string> = {
-        accept:           'application/json, text/plain, */*',
-        'content-type':   'application/x-www-form-urlencoded',
-        authtoken:        authToken,
-        spacekey:         spaceKey,
-        userid:           String(userId),
-        origin:           'https://platform.ravity.io',
-        referer:          'https://platform.ravity.io/newGenAi/',
-      };
-
-      const bodyData = new URLSearchParams({
-        serviceType: 'process_text',
-        data: JSON.stringify({
-          text:             textToSend,   // RAW — no modification, same as fleet copilot
-          userID:           String(userId),
-          sessionID:        sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-          assistId:         DT_ASSIST_ID,
-          connector:        DT_CONNECTOR,
-          description:      DT_DESCRIPTION,
-          tables:           DT_TABLES,
-          selected_files:   [],
-          type:             'connector',
-          documentStoreIds: DT_TABLES,
-          spaceKey:         spaceKey,
-        }),
-        spacekey: spaceKey,
-      });
-
-      const response = await fetch(BIZVIZ_URL, { method: 'POST', headers, body: bodyData });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error('BizWiz error:', errText);
-        setResponses(prev => [...prev, {
-          question: textToSend,
-          error: `Server returned ${response.status}: ${errText.slice(0, 200)}`,
-        }]);
-        return;
-      }
-
-      const data = await response.json();
-
-      // Parse response — same pattern as fleet copilot
-      let parsedResponse: any;
-      try {
-        parsedResponse = JSON.parse(data.response);
-      } catch {
-        parsedResponse = { html: data.response };
-      }
-
-      let cleanedResponse = '';
-      let suggestionList: string[] = [];
-
-      try {
-        if (parsedResponse && !parsedResponse.html) {
-          delete parsedResponse.query;
-          delete parsedResponse.dashboards;
-          delete parsedResponse.data_refreshed_at;
-
-          const { tableHTML, suggestionList: suggs } = buildResponseParts(parsedResponse);
-          suggestionList = suggs;
-          const hasChrt = !!extractChart(parsedResponse);
-          cleanedResponse = buildHtmlResponse(tableHTML, parsedResponse, hasChrt);
-        } else {
-          cleanedResponse = parsedResponse?.html || 'No response available';
-        }
-      } catch (err) {
-        console.warn('Response handling failed — fallback to raw string', err);
-        cleanedResponse = data.response || 'No response available';
-      }
-
-      const chartConfig2 = parsedResponse && !parsedResponse.html ? extractChart(parsedResponse) : null;
-      setResponses(prev => [...prev, {
-        question:     data.original_text || textToSend,
-        htmlResponse: cleanedResponse,
-        suggestions:  suggestionList,
-        chart:        chartConfig2,
-      }]);
-
-      // Ingestion — fire and forget, same as fleet copilot
-      try {
-        await fetch('/ingestion-proxy/ingestion/dataIngestion', {
-          method:  'POST',
-          headers: {
-            'Content-Type':  'application/json',
-            IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
-            IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
-          },
-          body: JSON.stringify({
-            question:   textToSend,
-            response:   JSON.stringify(data),
-            user_id:    userId,
-            action:     'add',
-            session_id: sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-            spacekey:   spaceKey,
-            user_name:  user?.user?.fullName || 'Unknown_User',
-            user_email: user?.user?.emailID  || 'unknown@ravity.io',
-          }),
-        });
-      } catch (ingErr) {
-        console.error('Ingestion error:', ingErr);
-      }
-
-    } catch (error) {
-      console.error('Error:', error);
-      setResponses(prev => [...prev, { question: inputText, error: 'Something went wrong!' }]);
-    } finally {
-      setLoading(false);
-      setInputText('');
-    }
-  };
-
-  // ── Delete history — same as fleet copilot ───────────────────────────────────
-  const handleDeleteHistory = async (sessionIdToDelete: string) => {
-    try {
-      const userId = user?.user?.id || user?.user?.userId;
-      if (!userId || !sessionIdToDelete) return;
-      setLoading(true);
-      await fetch('/ingestion-proxy/ingestion/dataIngestion', {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          IngestionId:     '0a20cc5f-18e3-4610-8e70-71ed68af1b3f',
-          IngestionSecret: '3xNIv66LGHA5DYU6ha2XgYdqg94mxE751+6OnJkWQNCbibCdD6ea1Q013khFQssA',
-        },
-        body: JSON.stringify({
-          question:   '',
-          response:   '',
-          user_id:    userId,
-          action:     'delete',
-          session_id: sessionIdToDelete,
-          spacekey:   user?.user?.spaceKey,
-          user_name:  user?.user?.fullName || 'Unknown_User',
-          user_email: user?.user?.emailID  || 'unknown@ravity.io',
-        }),
-      });
-      setQuestionHistory(prev => prev.filter(h => h.session_id !== sessionIdToDelete));
-    } catch (error) {
-      console.error('Error deleting history:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Initial suggestions — include VIN naturally so agent knows context ────────
-  const vinDisplay = vin ? vin.slice(-8) : 'selected VIN';
-  const initSuggestions = [
-    'How many harsh acceleration events per VIN?',
-    'Show fuel efficiency and total distance per VIN',
-    'Which VINs have the highest overspeeding events?',
-    'Show CO2 emissions per VIN ranked highest to lowest',
-  ];
-
-  return (
-    <>
-      <style>{`
-        @keyframes dtSpin { to { transform: rotate(360deg); } }
-        .dt-typing span { display:inline-block; width:7px; height:7px; border-radius:50%;
-          background:#e91e8c; margin:0 2px; animation:dtBounce 1.2s infinite; }
-        .dt-typing span:nth-child(2){ animation-delay:.2s }
-        .dt-typing span:nth-child(3){ animation-delay:.4s }
-        @keyframes dtBounce { 0%,100%{opacity:.2;transform:scale(.85)} 50%{opacity:1;transform:scale(1.1)} }
-      `}</style>
-
-      <div style={{ display:'flex', height:'calc(100vh - 72px)', fontFamily:'Arial, sans-serif', background:'#f5f7fa' }}>
-
-        {/* ── Sidebar ── */}
-        <div style={{
-          width: historyOpen ? 260 : 60, minWidth: historyOpen ? 260 : 60,
-          background:'#f8f9fa', borderRight:'1px solid #e8e8e8',
-          display:'flex', flexDirection:'column', transition:'width 0.25s', overflow:'hidden',
-        }}>
-          {/* New chat */}
-          <div onClick={() => { setInputText(''); setResponses([]); setSelectedSuggestion(''); }}
-            style={{ padding:'14px 16px', borderBottom:'1px solid #e0e0e0', fontWeight:600,
-              cursor:'pointer', color:'#666688', display:'flex', alignItems:'center', gap:10,
-              whiteSpace:'nowrap', fontSize:13 }}
-            onMouseEnter={e => (e.currentTarget.style.background='#f0f4ff')}
-            onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
-            💬 {historyOpen && 'New chat'}
-          </div>
-
-          {/* History toggle */}
-          <div onClick={() => setHistoryOpen(p => !p)}
-            style={{ padding:'14px 16px', borderBottom:'1px solid #e0e0e0', fontWeight:600,
-              cursor:'pointer', color:'#666688', display:'flex', alignItems:'center', gap:10,
-              whiteSpace:'nowrap', fontSize:13 }}
-            onMouseEnter={e => (e.currentTarget.style.background='#f0f4ff')}
-            onMouseLeave={e => (e.currentTarget.style.background='transparent')}>
-            🕑 {historyOpen && 'History'}
-          </div>
-
-          {historyOpen && (
-            <ul style={{ listStyle:'none', margin:0, padding:8, overflowY:'auto',
-              flex:1, scrollbarWidth:'thin' }}>
-              {questionHistory.length === 0 && (
-                <li style={{ padding:'12px 10px', color:'#aaa', fontSize:12 }}>
-                  No previous conversations
-                </li>
-              )}
-              {questionHistory.map((item, idx) => (
-                <li key={idx} style={{
-                  display:'flex', alignItems:'center', justifyContent:'space-between',
-                  padding:'9px 10px', borderRadius:8, marginBottom:2,
-                  cursor:'pointer', color:'#777799', fontSize:12, transition:'all 0.15s',
-                  ...(hoveredIndex1 === idx ? { background:'#f0f4ff', color:'#1a1a2e' } : {}),
+        {/* Selected provider config */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'end' }}>
+          {/* API Key */}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>
+              {cfg.name} API Key
+              <a href={cfg.keyLink} target="_blank" rel="noreferrer"
+                style={{ marginLeft: 8, fontSize: 11, color: cfg.color, textDecoration: 'none', fontWeight: 400 }}>
+                Get key →
+              </a>
+            </label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showKeys[provider] ? 'text' : 'password'}
+                placeholder={cfg.keyPlaceholder}
+                value={keys[provider]}
+                onChange={e => updateKey(provider, e.target.value)}
+                style={{
+                  width: '100%', padding: '10px 44px 10px 14px',
+                  border: `1.5px solid ${keys[provider] ? cfg.color : '#ddd'}`,
+                  borderRadius: 10, fontSize: 13, outline: 'none',
+                  boxSizing: 'border-box' as const, fontFamily: 'monospace',
+                  background: keys[provider] ? `${cfg.color}08` : '#fafafa',
                 }}
-                  onMouseEnter={() => setHoveredIndex1(idx)}
-                  onMouseLeave={() => setHoveredIndex1(null)}>
-                  <div title={item.context}
-                    style={{ flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', cursor:'pointer' }}
-                    onClick={() => {
-                      const userId = user?.user?.id || user?.user?.userId;
-                      if (userId && item.session_id) fetchHistoryDetail(String(userId), item.session_id);
-                    }}>
-                    💬 {item.context}
-                  </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); if (window.confirm('Delete this chat history?')) handleDeleteHistory(item.session_id); }}
-                    style={{ background:'none', border:'none', cursor:'pointer', padding:'2px 5px',
-                      borderRadius:4, color:'transparent', transition:'all 0.15s', marginLeft:6 }}
-                    onMouseEnter={e => { e.currentTarget.style.color='#ff6060'; e.currentTarget.style.background='#3a1a1a'; }}
-                    onMouseLeave={e => { e.currentTarget.style.color='transparent'; e.currentTarget.style.background='none'; }}>
-                    <Icon icon='Delete' size='sm' forceFamily='material' />
-                  </button>
-                </li>
+              />
+              <button
+                onClick={() => setShowKeys(s => ({ ...s, [provider]: !s[provider] }))}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, color: '#aaa' }}
+              >{showKeys[provider] ? '🙈' : '👁'}</button>
+            </div>
+          </div>
+
+          {/* Model select */}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#555', marginBottom: 6 }}>
+              Model
+            </label>
+            <select
+              value={models[provider]}
+              onChange={e => updateModel(provider, e.target.value)}
+              style={{
+                width: '100%', padding: '10px 14px',
+                border: `1.5px solid ${cfg.color}`,
+                borderRadius: 10, fontSize: 13, outline: 'none',
+                background: '#fff', cursor: 'pointer',
+                color: '#111', fontWeight: 600,
+              }}
+            >
+              {cfg.models.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.label}{m.note ? ` — ${m.note}` : ''}
+                </option>
               ))}
-            </ul>
+            </select>
+          </div>
+        </div>
+
+        {/* Run button */}
+        <div style={{ marginTop: 18, display: 'flex', alignItems: 'center', gap: 16 }}>
+          <button
+            onClick={runAnalysis} disabled={loading}
+            style={{
+              padding: '12px 32px',
+              background: loading ? '#f0f0f0' : `linear-gradient(135deg,${cfg.color},${cfg.color}cc)`,
+              border: 'none', borderRadius: 10, color: loading ? '#aaa' : '#fff',
+              fontWeight: 700, fontSize: 15, cursor: loading ? 'not-allowed' : 'pointer',
+              boxShadow: loading ? 'none' : `0 4px 16px ${cfg.color}44`,
+              display: 'flex', alignItems: 'center', gap: 10, transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => { if (!loading) e.currentTarget.style.transform = 'translateY(-2px)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; }}
+          >
+            {loading ? (
+              <><div style={{ width: 16, height: 16, border: '2px solid #aaa', borderTopColor: '#888', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}/> Analysing…</>
+            ) : (
+              <>{cfg.icon} Run Analysis with {cfg.name}</>
+            )}
+          </button>
+          <button
+            onClick={testConnection}
+            disabled={loading}
+            style={{
+              padding: '12px 20px', borderRadius: 10, fontWeight: 600, fontSize: 14,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              border: `1.5px solid ${cfg.color}`, background: 'transparent',
+              color: cfg.color, transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = `${cfg.color}18`; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            🔌 Test Key
+          </button>
+          {models[provider] && (
+            <span style={{ fontSize: 12, color: '#888' }}>
+              Using: <strong style={{ color: cfg.color }}>{cfg.models.find(m => m.id === models[provider])?.label || models[provider]}</strong>
+            </span>
           )}
         </div>
 
-        {/* ── Main chat area ── */}
-        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+        {/* Data info */}
+        <details style={{ marginTop: 14 }}>
+          <summary style={{ fontSize: 12, color: '#888', cursor: 'pointer', userSelect: 'none' as const }}>
+            📊 What data is sent to AI?
+          </summary>
+          <div style={{ marginTop: 8, background: '#f8f9fa', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#555', lineHeight: 2 }}>
+            {['Vehicle identity (model, variant, fuel, engine)', 'Usage (trips, distance, engine hours, locations)', 'Driving behaviour (harsh events, overspeeding, turns)', 'Fuel & efficiency (FE, CO₂, battery, adulteration)', 'Speed distribution (7 speed bands)', 'DTC/Fault codes (codes, ECU, status)', 'Climate (AC usage %, mileage loss)', 'Altitude, GSM signal, odometer resets', 'Fleet baseline comparisons (12+ KPI deltas)'].map((x, i) => <div key={i}>✅ {x}</div>)}
+            <div style={{ color: '#e91e8c', fontWeight: 600, marginTop: 6 }}>⚠️ No raw GPS coordinates or personal data included.</div>
+          </div>
+        </details>
+      </div>
 
-          {/* Context bar + date filter */}
-          <div style={{ display:'flex', alignItems:'center', background:'#ffffff',
-            borderBottom:'1px solid #e8e8e8', flexShrink:0, flexWrap:'wrap' }}>
-            {[
-              { label:'VIN',  value: vin || 'not selected', pink: !!vin },
-              { label:'From', value: apiParams.startdate,   pink: true },
-              { label:'To',   value: apiParams.enddate,     pink: true },
-            ].map(p => (
-              <div key={p.label} style={{ display:'flex', alignItems:'center', gap:7,
-                padding:'10px 18px', fontSize:12, borderRight:'1px solid #e8e8e8' }}>
-                <span style={{ color:'#aaa', textTransform:'uppercase', letterSpacing:'0.6px',
-                  fontSize:10, fontWeight:600 }}>{p.label}</span>
-                <span style={{ color: p.pink ? '#e91e8c' : '#aaa', fontFamily:'monospace',
-                  fontSize:12, maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                  {p.value}
-                </span>
-              </div>
+      {/* Error */}
+      {error && (
+        <div style={{ background: '#ffebee', border: '2px solid #ef9a9a', borderRadius: 12, padding: '14px 20px', marginBottom: 20, display: 'flex', gap: 12 }}>
+          <span style={{ fontSize: 24 }}>❌</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#c62828', fontSize: 14 }}>Analysis Failed</div>
+            <div style={{ fontSize: 13, color: '#555', marginTop: 4, whiteSpace: 'pre-wrap' as const }}>{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Progress */}
+      {(loading || dataStatus.length > 0) && (
+        <div style={{ background: '#fff', borderRadius: 14, padding: '18px 22px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 10 }}>📡 Progress</div>
+          <div style={{ height: 6, background: '#f0f0f0', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: `linear-gradient(90deg,${cfg.color},${cfg.color}cc)`, borderRadius: 3, transition: 'width 0.4s ease' }}/>
+          </div>
+          <div style={{ background: '#0d1117', borderRadius: 8, padding: '10px 14px', fontFamily: 'monospace', fontSize: 12, color: '#58a6ff', maxHeight: 160, overflowY: 'auto' as const, lineHeight: 1.9 }}>
+            {dataStatus.map((m, i) => (
+              <div key={i} style={{ color: m.startsWith('✅') ? '#3fb950' : m.startsWith('❌') ? '#f85149' : m.startsWith('⚠️') ? '#f0c040' : '#58a6ff' }}>{m}</div>
             ))}
-            <div style={{ padding:'4px 12px' }}>
-              <DateFilterBar title="" onApply={() => setTrigger(p => p + 1)} />
-            </div>
+            {loading && <div style={{ color: '#f0c040' }}>▊</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {sections.length > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap' as const, gap: 10 }}>
+            <div style={sec}>📊 Results — {apiParams.startdate} → {apiParams.enddate} · {cfg.name} · {cfg.models.find(m => m.id === models[provider])?.label}</div>
+            <button onClick={downloadTxt} style={{ padding: '9px 20px', background: `linear-gradient(135deg,${cfg.color},${cfg.color}cc)`, border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', boxShadow: `0 3px 12px ${cfg.color}44`, display: 'flex', alignItems: 'center', gap: 7 }}>
+              📥 Download Report (.txt)
+            </button>
           </div>
 
-          {/* Welcome screen */}
-          {responses.length === 0 && (
-            <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center',
-              justifyContent:'center', padding:'40px 32px', textAlign:'center', overflowY:'auto' }}>
-              <div style={{ width:54, height:54, borderRadius:16, background:'linear-gradient(135deg,#e91e8c,#c2185b)',
-                display:'flex', alignItems:'center', justifyContent:'center', fontSize:26,
-                margin:'0 auto 18px', boxShadow:'0 4px 20px rgba(233,30,140,0.25)' }}>🤖</div>
-              <h2 style={{ color:'#1a1a2e', fontSize:22, fontWeight:700, margin:'0 0 10px' }}>
-                Hey {user?.user?.fullName?.split(' ')[0] || 'there'}, How may I assist you today?
-              </h2>
-              <p style={{ color:'#666688', fontSize:14, margin:'0 0 16px', maxWidth:440, lineHeight:1.7 }}>
-                Ask me anything about the vehicle telematics data — harsh driving events, 
-                fuel efficiency, speed distribution, CO₂ emissions or fleet-wide comparisons.
-              </p>
-              {vin && (
-                <div style={{ display:'inline-flex', alignItems:'center', gap:8, background:'#f0f4ff',
-                  border:'1px solid #e0e0e0', borderRadius:20, padding:'7px 16px', fontSize:12,
-                  color:'#666688', marginBottom:24 }}>
-                  <span>Active VIN:</span>
-                  <strong style={{ color:'#e91e8c', fontFamily:'monospace' }}>{vin}</strong>
-                  <span>·</span>
-                  <span>{apiParams.startdate} → {apiParams.enddate}</span>
-                </div>
-              )}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, maxWidth:600, width:'100%' }}>
-                {initSuggestions.map((q, i) => (
-                  <button key={i}
+          {/* ── Accordion section tabs ── */}
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8, marginBottom: 20 }}>
+            {sections.map((s, i) => {
+              const st       = sevStyle(s.severity);
+              const isExpanded = !!expandedSections[i];
+              const cleanContent = s.content.replace(/^[0-9]+\.\s+[A-Z][A-Z\s&]+[\n:—\-]*/m, '').trim();
+              // Word count for preview
+              const words    = cleanContent.split(/\s+/);
+              const preview  = words.slice(0, 25).join(' ') + (words.length > 25 ? '…' : '');
+
+              return (
+                <div key={i} style={{
+                  background: isExpanded ? st.bg : '#fff',
+                  border: `1.5px solid ${isExpanded ? st.border : '#e8e8e8'}`,
+                  borderRadius: 14, overflow: 'hidden',
+                  boxShadow: isExpanded ? '0 4px 16px rgba(0,0,0,0.06)' : '0 1px 4px rgba(0,0,0,0.04)',
+                  transition: 'all 0.2s ease',
+                }}>
+                  {/* Accordion header — always visible, click to expand */}
+                  <div
+                    onClick={() => setExpandedSections(prev => ({ ...prev, [i]: !prev[i] }))}
                     style={{
-                      background: hoveredIndex === i ? '#f0f4ff' : '#ffffff',
-                      border: `1px solid ${hoveredIndex === i ? '#e91e8c55' : '#e0e0e0'}`,
-                      borderRadius:12, padding:'14px 16px', cursor:'pointer', textAlign:'left',
-                      color: hoveredIndex === i ? '#e0e0f0' : '#8080a0', fontSize:13, lineHeight:1.5,
-                      transition:'all 0.2s', fontFamily:'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '14px 20px', cursor: 'pointer',
+                      background: isExpanded ? `${st.border}28` : 'transparent',
+                      borderBottom: isExpanded ? `1px solid ${st.border}44` : 'none',
+                      userSelect: 'none' as const,
                     }}
-                    onMouseEnter={() => setHoveredIndex(i)}
-                    onMouseLeave={() => setHoveredIndex(null)}
-                    onClick={() => { setSelectedSuggestion(q); setInputText(q); handleSend(q); }}>
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Messages */}
-          {responses.length > 0 && (
-            <div style={{ flex:1, padding:'20px 28px', overflowY:'auto',
-              display:'flex', flexDirection:'column', gap:24 }}>
-              {responses.map((res, idx) => (
-                <div key={idx}>
-                  {/* User bubble */}
-                  <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:8 }}>
-                    <div style={{ background:'linear-gradient(135deg,#e91e8c,#c2185b)', color:'#fff',
-                      padding:'12px 18px', borderRadius:'18px 18px 4px 18px', maxWidth:'68%',
-                      fontSize:14, lineHeight:1.6, boxShadow:'0 4px 16px #e91e8c30' }}>
-                      {res.question}
-                    </div>
-                  </div>
-
-                  {/* AI bubble */}
-                  {res.error ? (
-                    <div style={{ background:'#fff5f5', border:'1px solid #ffcccc',
-                      color:'#cc2222', padding:'14px 18px', borderRadius:'4px 18px 18px 18px',
-                      fontSize:14 }}>
-                      {res.error}
-                    </div>
-                  ) : (
-                    <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
-                      <div style={{ width:32, height:32, borderRadius:10, flexShrink:0, marginTop:2,
-                        background:'linear-gradient(135deg,#e91e8c,#c2185b)',
-                        display:'flex', alignItems:'center', justifyContent:'center',
-                        fontSize:14, boxShadow:'0 2px 8px #e91e8c40' }}>🤖</div>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div>
-                          {res.chart && (
-                            <DataViz
-                              data={res.chart.data}
-                              xKey={res.chart.xKey}
-                              yKey={res.chart.yKey}
-                              title={res.chart.title}
-                            />
-                          )}
-                          <div style={{ background:'#fff', border:'1px solid #e8e8e8',
-                            padding:'16px 20px', borderRadius:res.chart ? '0 0 12px 12px' : '4px 18px 18px 18px',
-                            fontSize:14, lineHeight:1.8, maxWidth:'100%',
-                            borderTop: res.chart ? 'none' : undefined }}
-                            dangerouslySetInnerHTML={{ __html: res.htmlResponse }} />
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 20, flexShrink: 0 }}>{s.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: isExpanded ? 0 : 3 }}>
+                          <span style={{ fontWeight: 800, fontSize: 14, color: '#111' }}>{s.title}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 20,
+                            background: st.badgeBg, color: st.badge, textTransform: 'uppercase' as const, letterSpacing: 0.6, flexShrink: 0 }}>
+                            {s.severity}
+                          </span>
                         </div>
-                        {res.suggestions?.length > 0 && (
-                          <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:10 }}>
-                            {res.suggestions.map((s: string, i: number) => (
-                              <button key={i}
-                                style={{
-                                  background: hoveredIndex2 === i ? '#f0f4ff' : '#f0f0f8',
-                                  border: `1px solid ${hoveredIndex2 === i ? '#e91e8c55' : '#e0e0e0'}`,
-                                  color: hoveredIndex2 === i ? '#e0e0f0' : '#8080b0',
-                                  padding:'7px 14px', borderRadius:20, fontSize:12,
-                                  cursor:'pointer', transition:'all 0.2s', fontFamily:'inherit',
-                                  ...(selectedSuggestion === s ? { borderColor:'#e91e8c', color:'#e91e8c' } : {}),
-                                }}
-                                onMouseEnter={() => setHoveredIndex2(i)}
-                                onMouseLeave={() => setHoveredIndex2(null)}
-                                onClick={() => { setSelectedSuggestion(s); handleSend(s); }}>
-                                {s}
-                              </button>
-                            ))}
+                        {!isExpanded && (
+                          <div style={{ fontSize: 12, color: '#777', lineHeight: 1.4, overflow: 'hidden',
+                            textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                            {preview}
                           </div>
                         )}
                       </div>
                     </div>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 8, flexShrink: 0, marginLeft: 12,
+                      background: isExpanded ? st.border : '#f0f0f0',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 14, color: isExpanded ? '#fff' : '#888',
+                      transition: 'all 0.2s',
+                    }}>
+                      {isExpanded ? '▲' : '▼'}
+                    </div>
+                  </div>
+
+                  {/* Expanded content */}
+                  {isExpanded && (
+                    <div style={{ padding: '18px 22px 20px' }}>
+                      <div style={{ fontSize: 14, color: '#222', lineHeight: 2, whiteSpace: 'pre-line' as const }}>
+                        {cleanContent}
+                      </div>
+                    </div>
                   )}
                 </div>
-              ))}
+              );
+            })}
+          </div>
 
-              {/* Typing indicator */}
-              {loading && (
-                <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
-                  <div style={{ width:32, height:32, borderRadius:10, flexShrink:0,
-                    background:'linear-gradient(135deg,#e91e8c,#c2185b)',
-                    display:'flex', alignItems:'center', justifyContent:'center', fontSize:14 }}>🤖</div>
-                  <div style={{ background:'#ffffff', border:'1px solid #e0e0e0',
-                    padding:'14px 18px', borderRadius:'4px 18px 18px 18px' }}>
-                    <span className="dt-typing"><span/><span/><span/></span>
-                  </div>
-                </div>
-              )}
-
-              {/* Inline suggestions after last message */}
-              {!loading && responses.length > 0 && !responses[responses.length - 1]?.suggestions?.length && (
-                <div style={{ display:'flex', flexWrap:'wrap', gap:10, justifyContent:'center',
-                  padding:'12px 0', borderTop:'1px solid #e8e8e8' }}>
-                  {initSuggestions.map((question, index) => (
-                    <button key={index}
-                      style={{
-                        padding:'7px 14px', borderRadius:20,
-                        border: `1px solid ${hoveredIndex === index ? '#e91e8c55' : '#e0e0e0'}`,
-                        background: hoveredIndex === index ? '#f0f4ff' : '#ffffff',
-                        cursor:'pointer', fontSize:12, transition:'all 0.2s ease',
-                        color: hoveredIndex === index ? '#e0e0f0' : '#8080a0',
-                        fontFamily:'inherit',
-                      }}
-                      onMouseEnter={() => setHoveredIndex(index)}
-                      onMouseLeave={() => setHoveredIndex(null)}
-                      onClick={() => { setSelectedSuggestion(question); setInputText(question); handleSend(question); }}>
-                      {question}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div ref={chatEndRef} />
-            </div>
-          )}
-
-          {/* Input bar */}
-          <div style={{ display:'flex', padding:'12px 20px', borderTop:'1px solid #e8e8e8',
-            background:'#ffffff', gap:10, alignItems:'center' }}>
-            <div style={{ flex:1, display:'flex', alignItems:'center', background:'#ffffff',
-              border:'1.5px solid #d0d0d0', borderRadius:14, padding:'4px 4px 4px 16px',
-              transition:'border-color 0.2s' }}
-              onFocus={() => {}} >
-              <input
-                type="text"
-                placeholder='Ask anything about vehicle telematics — harsh events, fuel efficiency, speed, CO2...'
-                value={inputText}
-                onChange={e => setInputText(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-                style={{ flex:1, background:'none', border:'none', outline:'none',
-                  color:'#1a1a2e', fontSize:14, padding:'8px 0', fontFamily:'inherit' }}
-              />
-            </div>
-            <button onClick={() => handleSend()}
-              disabled={loading || !inputText.trim()}
-              style={{ width:42, height:42, borderRadius:10, flexShrink:0,
-                background: (loading || !inputText.trim()) ? '#e0e0e0' : 'linear-gradient(135deg,#e91e8c,#c2185b)',
-                border:'none', cursor: (loading || !inputText.trim()) ? 'not-allowed' : 'pointer',
-                display:'flex', alignItems:'center', justifyContent:'center',
-                color:'#fff', fontSize:16, transition:'all 0.2s',
-                boxShadow: (loading || !inputText.trim()) ? 'none' : '0 2px 10px #e91e8c40' }}>
-              {loading
-                ? <div style={{ width:16, height:16, border:'2px solid #aaa',
-                    borderTopColor:'transparent', borderRadius:'50%',
-                    animation:'dtSpin 0.8s linear infinite' }} />
-                : '➤'}
+          {/* Expand/Collapse all controls */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button onClick={() => setExpandedSections(Object.fromEntries(sections.map((_,i)=>[i,true])))}
+              style={{ padding: '5px 14px', border: '1px solid #ddd', borderRadius: 8, background: '#f9f9f9',
+                cursor: 'pointer', fontSize: 12, color: '#555', fontWeight: 600 }}>
+              ⬇ Expand All
+            </button>
+            <button onClick={() => setExpandedSections({})}
+              style={{ padding: '5px 14px', border: '1px solid #ddd', borderRadius: 8, background: '#f9f9f9',
+                cursor: 'pointer', fontSize: 12, color: '#555', fontWeight: 600 }}>
+              ⬆ Collapse All
             </button>
           </div>
-          <div style={{ textAlign:'center', fontSize:11, color:'#bbb', paddingBottom:8 }}>
-            Ask fleet-wide questions for best results — e.g. 'harsh acceleration per VIN'
+
+          {/* Full raw response */}
+          <div style={{ background: '#fff', borderRadius: 14, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>📄</span>
+                <span style={{ fontWeight: 700, fontSize: 14, color: '#333' }}>Complete Raw Response</span>
+                <span style={{ fontSize: 11, color: '#888', background: '#f0f0f0', padding: '2px 8px', borderRadius: 12 }}>
+                  {rawResponse.length.toLocaleString()} chars · {rawResponse.split('\n').length} lines
+                </span>
+              </div>
+              <button onClick={downloadTxt} style={{ padding: '6px 14px', border: `1.5px solid ${cfg.color}`, borderRadius: 8, background: `${cfg.color}18`, cursor: 'pointer', fontSize: 12, color: cfg.color, fontWeight: 600 }}>
+                📥 Download .txt
+              </button>
+            </div>
+            <div style={{ padding: '18px 22px', fontFamily: "'Courier New', monospace", fontSize: 13, color: '#1a1a2e', lineHeight: 1.9, whiteSpace: 'pre-wrap' as const, background: '#fdfdfd', maxHeight: 600, overflowY: 'auto' as const }}>
+              {rawResponse}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Empty state */}
+      {sections.length === 0 && !loading && !error && (
+        <div style={{ background: '#fff', borderRadius: 14, padding: '60px 40px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', textAlign: 'center' as const }}>
+          <div style={{ fontSize: 60, marginBottom: 16 }}>🤖</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: '#111', marginBottom: 8 }}>Vehicle Analysis</div>
+          <div style={{ fontSize: 14, color: '#888', maxWidth: 480, margin: '0 auto', lineHeight: 1.7 }}>
+            Select your AI provider, enter your API key, choose a model, then click <strong style={{ color: '#e91e8c' }}>Run Analysis</strong> to get expert insights on this vehicle's telematics data.
+          </div>
+          <div style={{ marginTop: 20, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' as const }}>
+            {PROVIDERS.map(p => (
+              <span key={p.id} style={{ background: `${p.color}18`, color: p.color, fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: `1px solid ${p.color}44` }}>
+                {p.icon} {p.name}
+              </span>
+            ))}
           </div>
         </div>
-      </div>
-    </>
+      )}
+    </div>
   );
 };
 

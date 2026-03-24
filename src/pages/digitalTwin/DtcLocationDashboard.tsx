@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchDtcLocationData, fetchDtcInfo, fetchDtcTile } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import KpiCard from './KpiCard';
 
 const page: React.CSSProperties = { padding: '20px 24px', background: '#f7f8fa', minHeight: '100vh', width: '100%', boxSizing: 'border-box' };
@@ -155,9 +156,11 @@ const DtcLocationDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color: '#e91e8c', fontWeight: 900, fontSize: 26, marginBottom: 20, letterSpacing: 1 }}>
-        🗺️ DTC Location Intelligence
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.dtcLocation}
+        title="DTC Location Intelligence"
+        subtitle="Fault occurrence mapped to geographic locations and routes"
+      />
       <DateFilterBar title="DTC Location Analysis" onApply={() => setTrigger(prev => prev + 1)} />
 
       {/* Filter Bar */}

@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchVehicleInfo, fetchVehicleUsage, fetchOverallData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import KpiCard from './KpiCard';
 import ChartCard from './ChartCard';
 
@@ -102,9 +103,11 @@ const OverviewDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color:'#e91e8c', fontWeight:900, fontSize:26, marginBottom:20, letterSpacing:1 }}>
-        🚗 Vehicle Digital Twin — Overview
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.overview}
+        title="Vehicle Digital Twin — Overview"
+        subtitle="Real-time vehicle health, performance summary and key metrics"
+      />
       <DateFilterBar title="Vehicle Overview" onApply={() => setTrigger(prev => prev + 1)}/>
       {loading && <div style={{ textAlign:'center', padding:28, color:'#aaa' }}>Loading…</div>}
 

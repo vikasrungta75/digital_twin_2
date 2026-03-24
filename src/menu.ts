@@ -1,24 +1,35 @@
 export const dashboardMenu = {
-    about:           { id: 'dt-about',        text: 'About',                path: 'dt/about',        icon: 'Menu',            subMenu: null, searchable: false, hide: false },
-    overview:        { id: 'dt-overview',     text: 'Overview',             path: 'dt/overview',     icon: 'GridView',        subMenu: null, searchable: true,  hide: false },
-    climate:         { id: 'dt-climate',      text: 'Climate Analysis',     path: 'dt/climate',      icon: 'WbSunny',         subMenu: null, searchable: true,  hide: false },
-    driving:         { id: 'dt-driving',      text: 'Driving Analysis',     path: 'dt/driving',      icon: 'Speed',           subMenu: null, searchable: true,  hide: false },
-    fuel:            { id: 'dt-fuel',         text: 'Fuel Analysis',        path: 'dt/fuel',         icon: 'LocalGasStation', subMenu: null, searchable: true,  hide: false },
-    light:           { id: 'dt-light',        text: 'Light Analysis',       path: 'dt/light',        icon: 'FlashOn',         subMenu: null, searchable: true,  hide: false },
-    speedAnalysis:   { id: 'dt-speed',        text: 'Speed Analysis',       path: 'dt/speed',        icon: 'Timer',           subMenu: null, searchable: true,  hide: false },
-    trip:            { id: 'dt-trip',         text: 'Trip Analysis',        path: 'dt/trip',         icon: 'Route',           subMenu: null, searchable: true,  hide: false },
-    dtc:             { id: 'dt-dtc',          text: 'DTC Analysis',         path: 'dt/dtc',          icon: 'Dns',             subMenu: null, searchable: true,  hide: false },
-    intelligence:    { id: 'dt-intelligence', text: 'Intelligence',         path: 'dt/intelligence', icon: 'Psychology',      subMenu: null, searchable: true,  hide: false },
-    aiAnalysis:      { id: 'dt-ai',           text: 'AI Analysis',          path: 'dt/ai',           icon: 'Psychology',      subMenu: null, searchable: true,  hide: false },
-    maintenance:     { id: 'dt-maintenance',  text: 'Maintenance',          path: 'dt/maintenance',  icon: 'Build',           subMenu: null, searchable: true,  hide: false },
-    warranty:        { id: 'dt-warranty',     text: 'Warranty Quality',     path: 'dt/warranty',     icon: 'Shield',          subMenu: null, searchable: true,  hide: false },
-    environment:     { id: 'dt-environment',  text: 'Environment',          path: 'dt/environment',  icon: 'Eco',             subMenu: null, searchable: true,  hide: false },
-    // ── NEW DASHBOARDS ─────────────────────────────────────────────────────────
-    security:        { id: 'dt-security',     text: 'Security & Access',    path: 'dt/security',     icon: 'Lock',            subMenu: null, searchable: true,  hide: false },
-    cost:            { id: 'dt-cost',         text: 'Cost Intelligence',    path: 'dt/cost',         icon: 'MonetizationOn',  subMenu: null, searchable: true,  hide: false },
-    benchmark:       { id: 'dt-benchmark',    text: 'Fleet Benchmark',      path: 'dt/benchmark',    icon: 'Leaderboard',     subMenu: null, searchable: true,  hide: false },
-    dtcLocation:     { id: 'dt-dtc-location', text: 'DTC Location Map',     path: 'dt/dtc-location', icon: 'LocationOn',      subMenu: null, searchable: true,  hide: false },
-    alerts:          { id: 'dt-alerts',       text: 'Alerts Centre',        path: 'dt/alerts',       icon: 'NotificationsActive', subMenu: null, searchable: true, hide: false },
+    // ── Top-level standalone ───────────────────────────────────────────────────
+    about:                   { id: 'dt-about',        text: 'About',                      path: 'dt/about',                 icon: 'Menu',                subMenu: null, searchable: false, hide: false },
+
+    // ── AI / Intelligence ──────────────────────────────────────────────────────
+    conversationalIntelligence: { id: 'dt-conv-intel',  text: 'Conversational Intelligence', path: 'dt/conversational-intelligence', icon: 'Chat',          subMenu: null, searchable: true,  hide: false },
+    vehicleAnalysis:         { id: 'dt-vehicle-analysis', text: 'Vehicle Analysis',          path: 'dt/vehicle-analysis',     icon: 'Analytics',           subMenu: null, searchable: true,  hide: false },
+    agentRecommendation:     { id: 'dt-agent-rec',    text: 'Agent Recommendation',        path: 'dt/agent-recommendation',  icon: 'Psychology',           subMenu: null, searchable: true,  hide: false },
+
+    // ── Core Analysis ──────────────────────────────────────────────────────────
+    overview:                { id: 'dt-overview',     text: 'Overview',                   path: 'dt/overview',              icon: 'GridView',            subMenu: null, searchable: true,  hide: false },
+    trip:                    { id: 'dt-trip',         text: 'Trip Analysis',              path: 'dt/trip',                  icon: 'Route',               subMenu: null, searchable: true,  hide: false },
+    driving:                 { id: 'dt-driving',      text: 'Driving Analysis',           path: 'dt/driving',               icon: 'Speed',               subMenu: null, searchable: true,  hide: false },
+    dtc:                     { id: 'dt-dtc',          text: 'DTC Analysis',               path: 'dt/dtc',                   icon: 'Dns',                 subMenu: null, searchable: true,  hide: false },
+    speedAnalysis:           { id: 'dt-speed',        text: 'Speed Analysis',             path: 'dt/speed',                 icon: 'Timer',               subMenu: null, searchable: true,  hide: false },
+    fuel:                    { id: 'dt-fuel',         text: 'Fuel Analysis',              path: 'dt/fuel',                  icon: 'LocalGasStation',     subMenu: null, searchable: true,  hide: false },
+    light:                   { id: 'dt-light',        text: 'Light Analysis',             path: 'dt/light',                 icon: 'FlashOn',             subMenu: null, searchable: true,  hide: false },
+    climate:                 { id: 'dt-climate',      text: 'Climate Analysis',           path: 'dt/climate',               icon: 'WbSunny',             subMenu: null, searchable: true,  hide: false },
+
+    // ── Advanced Analysis ──────────────────────────────────────────────────────
+    maintenance:             { id: 'dt-maintenance',  text: 'Maintenance',                path: 'dt/maintenance',           icon: 'Build',               subMenu: null, searchable: true,  hide: false },
+    warranty:                { id: 'dt-warranty',     text: 'Warranty',                   path: 'dt/warranty',              icon: 'Shield',              subMenu: null, searchable: true,  hide: false },
+    environment:             { id: 'dt-environment',  text: 'Environmental',              path: 'dt/environment',           icon: 'Eco',                 subMenu: null, searchable: true,  hide: false },
+
+    // ── Additional dashboards (kept for routing; hidden from side panel if needed) ─
+    intelligence:            { id: 'dt-intelligence', text: 'Agent Recommendation',       path: 'dt/agent-recommendation',  icon: 'Psychology',          subMenu: null, searchable: true,  hide: true  },
+    aiAnalysis:              { id: 'dt-ai',           text: 'Vehicle Analysis',           path: 'dt/vehicle-analysis',      icon: 'Analytics',           subMenu: null, searchable: true,  hide: true  },
+    security:                { id: 'dt-security',     text: 'Security & Access',          path: 'dt/security',              icon: 'Lock',                subMenu: null, searchable: true,  hide: false },
+    cost:                    { id: 'dt-cost',         text: 'Cost Intelligence',          path: 'dt/cost',                  icon: 'MonetizationOn',      subMenu: null, searchable: true,  hide: false },
+    benchmark:               { id: 'dt-benchmark',    text: 'Fleet Benchmark',            path: 'dt/benchmark',             icon: 'Leaderboard',         subMenu: null, searchable: true,  hide: false },
+    dtcLocation:             { id: 'dt-dtc-location', text: 'DTC Location Map',           path: 'dt/dtc-location',          icon: 'LocationOn',          subMenu: null, searchable: true,  hide: false },
+    alerts:                  { id: 'dt-alerts',       text: 'Alerts Centre',              path: 'dt/alerts',                icon: 'NotificationsActive', subMenu: null, searchable: true,  hide: false },
 };
 
 export const authPages = {

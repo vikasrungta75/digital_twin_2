@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData, fetchOverallKpiData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -101,9 +102,11 @@ const SecurityDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color: '#e91e8c', fontWeight: 900, fontSize: 26, marginBottom: 20, letterSpacing: 1 }}>
-        🔒 Vehicle Security & Access Intelligence
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.security}
+        title="Security & Access Intelligence"
+        subtitle="Vehicle access events, security alerts and breach detection"
+      />
       <DateFilterBar title="Security Analysis" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 28, color: '#aaa' }}>Loading security data…</div>}
 

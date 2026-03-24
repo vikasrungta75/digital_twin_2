@@ -4,6 +4,7 @@ import {
   fetchOverallData, fetchDtcInfo, fetchFuelEvents, fetchOverallKpiData,
 } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 
 const page: React.CSSProperties = { padding: '20px 24px', background: '#f7f8fa', minHeight: '100vh', width: '100%', boxSizing: 'border-box' };
 const sec: React.CSSProperties  = { color: '#e91e8c', fontWeight: 800, fontSize: 15, marginBottom: 14, textTransform: 'uppercase' as const, letterSpacing: 0.5, borderLeft: '4px solid #e91e8c', paddingLeft: 10 };
@@ -230,9 +231,11 @@ const AlertsCentreDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color: '#e91e8c', fontWeight: 900, fontSize: 26, marginBottom: 20, letterSpacing: 1 }}>
-        🔔 Alerts & Notifications Centre
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.alerts}
+        title="Alerts & Notifications Centre"
+        subtitle="Active alerts, threshold breaches and notification management"
+      />
       <DateFilterBar title="Alerts Centre" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 28, color: '#aaa' }}>Analysing vehicle data…</div>}
 

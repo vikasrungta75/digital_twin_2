@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchSpeedDistribution, fetchOverallData, fetchOverallKpiData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -102,6 +103,11 @@ const SpeedDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.speed}
+        title="Speed Analysis"
+        subtitle="Speed distribution, overspeed events and band breakdown"
+      />
       <DateFilterBar title="Speed Analysis" onApply={()=>setTrigger(prev=>prev+1)}/>
       {loading && <div style={{textAlign:'center',padding:28,color:'#aaa'}}>Loading speed data…</div>}
 

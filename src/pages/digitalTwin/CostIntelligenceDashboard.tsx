@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData, fetchOverallKpiData, fetchFuelEvents } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -120,9 +121,11 @@ const CostIntelligenceDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color: '#e91e8c', fontWeight: 900, fontSize: 26, marginBottom: 20, letterSpacing: 1 }}>
-        💰 Operational Cost Intelligence
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.cost}
+        title="Operational Cost Intelligence"
+        subtitle="Total cost of ownership, fuel costs and efficiency savings analysis"
+      />
       <DateFilterBar title="Cost Analysis" onApply={() => setTrigger(prev => prev + 1)} />
 
       {/* Fuel Price Configurator */}

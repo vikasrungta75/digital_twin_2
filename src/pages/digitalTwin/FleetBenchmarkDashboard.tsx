@@ -6,6 +6,7 @@ import {
   fetchVinFilter,
 } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -141,9 +142,11 @@ const FleetBenchmarkDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
-      <h1 style={{ color: '#e91e8c', fontWeight: 900, fontSize: 26, marginBottom: 20, letterSpacing: 1 }}>
-        📊 Fleet Benchmarking — Vehicle vs Fleet
-      </h1>
+      <PageHeader
+        iconPath={ICON_PATHS.benchmark}
+        title="Fleet Benchmark"
+        subtitle="Vehicle vs fleet performance comparison and ranking"
+      />
       <DateFilterBar title="Fleet Benchmark" onApply={() => setTrigger(prev => prev + 1)} />
 
       {/* Peer VIN Selector */}

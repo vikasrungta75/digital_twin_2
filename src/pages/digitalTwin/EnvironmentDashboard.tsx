@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -100,6 +101,11 @@ const EnvironmentDashboard: FC = () => {
 
   return (
     <div style={pageStyle} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.environment}
+        title="Environmental Impact"
+        subtitle="CO₂ emissions, fuel burn and environmental compliance"
+      />
       <DateFilterBar title="Environment & Emissions" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Calculating emissions…</div>}
 

@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -85,6 +86,11 @@ const LightDashboard: FC = () => {
 
   return (
     <div style={pageStyle} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.light}
+        title="Light & Indicator Analysis"
+        subtitle="Indicator usage, hazard activations and light event patterns"
+      />
       <DateFilterBar title="Light & Indicator Analysis" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Loading light data…</div>}
 

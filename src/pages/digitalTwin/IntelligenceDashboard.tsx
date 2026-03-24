@@ -4,6 +4,7 @@ import { fetchSummaryBaselineTile, fetchOverallKpiData, fetchOverallData } from 
 import DateFilterBar from './DateFilterBar';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 
 const pageStyle: React.CSSProperties = { padding:'20px 24px', background:'#f7f8fa', minHeight:'100vh', width:'100%', boxSizing:'border-box' as const };
 const sectionTitle: React.CSSProperties = {
@@ -190,7 +191,12 @@ const IntelligenceDashboard: FC = () => {
 
   return (
     <div style={pageStyle} id="dt-page-content">
-      <DateFilterBar title="Intelligence — KPI Summary" onApply={() => setTrigger(prev => prev + 1)} />
+      <PageHeader
+        iconPath={ICON_PATHS.agentRec}
+        title="Agent Recommendation"
+        subtitle="AI-powered KPI benchmarking and actionable vehicle recommendations"
+      />
+      <DateFilterBar title="Agent Recommendation" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Loading intelligence data…</div>}
 
       {/* Vehicle Health Summary Banner */}

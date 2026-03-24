@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData, fetchTurnPercent } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -132,6 +133,11 @@ const DrivingDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.driving}
+        title="Driving Analysis"
+        subtitle="Driving behaviour events, patterns and risk scoring"
+      />
       <DateFilterBar title="Driving Analysis" onApply={() => setTrigger(prev => prev + 1)}/>
       {loading && <div style={{ textAlign:'center', padding:28, color:'#aaa' }}>Loading driving data…</div>}
 

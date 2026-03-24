@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchDtcInfo, fetchDtcTile, fetchDtcTrend, fetchDtcStatusCount, fetchDtcOccurrence } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -149,6 +150,11 @@ const DtcDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.dtc}
+        title="DTC & Fault Analysis"
+        subtitle="Diagnostic trouble codes, ECU faults and resolution tracking"
+      />
       <DateFilterBar title="DTC & Fault Analysis" onApply={()=>setTrigger(prev=>prev+1)}/>
       {loading && <div style={{textAlign:'center',padding:28,color:'#aaa'}}>Loading DTC data…</div>}
 

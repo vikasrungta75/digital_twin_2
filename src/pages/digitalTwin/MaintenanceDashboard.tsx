@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchOverallData, fetchDtcInfo, fetchDtcOccurrence } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -173,6 +174,11 @@ const MaintenanceDashboard: FC = () => {
 
   return (
     <div style={pageStyle} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.maintenance}
+        title="Maintenance & Predictive Health"
+        subtitle="Service schedules, predictive alerts and component health"
+      />
       <DateFilterBar title="Maintenance & Predictive Health" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Analysing vehicle health…</div>}
 

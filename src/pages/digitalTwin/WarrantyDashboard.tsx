@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchDtcInfo, fetchDtcOccurrence, fetchOverallData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -118,6 +119,11 @@ const WarrantyDashboard: FC = () => {
 
   return (
     <div style={pageStyle} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.warranty}
+        title="Warranty Analysis"
+        subtitle="Warranty risk assessment, claim history and coverage status"
+      />
       <DateFilterBar title="Warranty Quality Analysis" onApply={() => setTrigger(prev => prev + 1)} />
       {loading && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Loading warranty data…</div>}
 

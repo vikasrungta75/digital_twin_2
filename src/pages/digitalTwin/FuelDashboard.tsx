@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchFuelEvents, fetchOverallData, fetchOverallKpiData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -105,6 +106,11 @@ const FuelDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.fuel}
+        title="Fuel & Energy Analysis"
+        subtitle="Fuel efficiency, consumption events and adulteration detection"
+      />
       <DateFilterBar title="Fuel & Energy Analysis" onApply={()=>setTrigger(prev=>prev+1)} />
       {loading && <div style={{textAlign:'center',padding:28,color:'#aaa'}}>Loading fuel data…</div>}
 

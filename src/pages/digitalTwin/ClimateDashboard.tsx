@@ -2,6 +2,7 @@ import React, { FC, useCallback, useEffect, useState } from 'react';
 import { useDt } from '../../contexts/digitalTwinContext';
 import { fetchAcDistribution, fetchOverallData } from '../../services/digitalTwinApi';
 import DateFilterBar from './DateFilterBar';
+import PageHeader, { ICON_PATHS } from './PageHeader';
 import ChartCard from './ChartCard';
 import KpiCard from './KpiCard';
 
@@ -84,6 +85,11 @@ const ClimateDashboard: FC = () => {
 
   return (
     <div style={page} id="dt-page-content">
+      <PageHeader
+        iconPath={ICON_PATHS.climate}
+        title="Climate & HVAC Analysis"
+        subtitle="Air conditioning usage, cabin temperature and climate events"
+      />
       <DateFilterBar title="Climate & HVAC Analysis" onApply={() => setTrigger(prev => prev + 1)}/>
       {loading && <div style={{ textAlign:'center', padding:28, color:'#aaa' }}>Loading climate data…</div>}
 
