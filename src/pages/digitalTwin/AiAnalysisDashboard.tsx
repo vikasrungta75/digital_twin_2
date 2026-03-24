@@ -84,11 +84,29 @@ const EMPTY_PARSED: ParsedResponse = {
   explanation: '', suggestions: [], chart: null,
 };
 
-// ─── Response parser ──────────────────────────────────────────────────────────
-// Confirmed shape from network:
-// fetch returns: { original_text, response: JSON_STRING }
-// JSON_STRING parses to: { data: JSON_STRING, summary, explanation, visualization: {...} }
-// data JSON_STRING parses to: [{ _id, total_harsh_acceleration, ... }]
+// ─── Response parser ─────────────────────────────────────────────────────────
+// Handles both response shapes observed across agents:
+//
+// Shape A (DT agent — data present):
+//   fetch → { original_text, response: JSON_STRING }
+//   JSON_STRING → { data: JSON_STRING, summary: JSON_STRING,
+//                   explanation: string,
+//                   visualization: { Answer, Analysis, Suggestions, chart_type, x_axis, y_axis } }
+//
+// Shape B (Fleet agent — working reference):
+//   fetch → { original_text, response: JSON_STRING }
+//   JSON_STRING → { data: JSON_STRING, summary: ARRAY,
+//                   explanation: string,
+//                   visualization: { Answer, Analysis, Suggestions, chart_type, x_axis, y_axis } }
+//
+// Shape C (any agent — no data):
+//   visualization: { error: string, answer: string, suggestions: [] }  ← lowercase
+//
+// Rules:
+//   - viz fields are CamelCase (Answer/Analysis/Suggestions) when data present
+//   - viz fields are lowercase (answer/suggestions) when data empty
+//   - Always show explanation even when data is []
+//   - summary can be a JSON string OR a plain array
 const parseResponse = (raw: any): ParsedResponse => {
   try {
     if (!raw) return { ...EMPTY_PARSED };
@@ -97,44 +115,49 @@ const parseResponse = (raw: any): ParsedResponse => {
     let inner: any = {};
     try {
       const r = typeof raw?.response === 'string' ? raw.response : raw;
-      inner   = typeof r === 'string' ? JSON.parse(r) : (r && typeof r === 'object' ? r : {});
+      inner = typeof r === 'string' ? JSON.parse(r) : (r && typeof r === 'object' ? r : {});
     } catch {
-      // response is not JSON — treat as plain text answer
       const fallback = String(raw?.response || raw || '');
       return { ...EMPTY_PARSED, answer: fallback ? `<p>${fallback}</p>` : '' };
     }
 
-    // Step 2 — parse data rows (inner.data is itself a JSON string)
+    // Step 2 — parse data rows (inner.data is a JSON string)
     let tableRows: any[] = [];
     try {
-      const dataRaw = inner.data ?? inner.summary ?? '[]';
+      const dataRaw = inner.data ?? '[]';
       const parsed  = typeof dataRaw === 'string' ? JSON.parse(dataRaw) : dataRaw;
       tableRows     = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      tableRows = [];
-    }
+    } catch { tableRows = []; }
 
-    // Step 3 — visualization fields
-    const viz        = (inner.visualization && typeof inner.visualization === 'object')
-                         ? inner.visualization : {};
-    const answer     = String(viz.Answer   || viz.answer   || '');
-    const analysis   = String(viz.Analysis || viz.analysis || '');
+    // Step 3 — visualization: handle BOTH CamelCase (data present) and lowercase (no data)
+    const viz = (inner.visualization && typeof inner.visualization === 'object')
+      ? inner.visualization : {};
+
+    // CamelCase takes priority (data-present shape), fallback to lowercase
+    const answer     = String(viz.Answer    || viz.answer    || '');
+    const analysis   = String(viz.Analysis  || viz.analysis  || '');
     const explanation= String(inner.explanation || '');
 
-    // Step 4 — suggestions (array or comma-separated string)
+    // Suggestions: array or comma string, both shapes
     let suggestions: string[] = [];
     try {
-      const raw_s = viz.Suggestions || viz.suggestions || [];
-      suggestions = Array.isArray(raw_s)
-        ? raw_s.filter(Boolean)
-        : String(raw_s).split(',').map((s: string) => s.trim()).filter(Boolean);
-    } catch {
-      suggestions = [];
-    }
+      const rawS = viz.Suggestions || viz.suggestions || [];
+      suggestions = Array.isArray(rawS)
+        ? rawS.filter(Boolean)
+        : String(rawS).split(',').map((s: string) => s.trim()).filter(Boolean);
+    } catch { suggestions = []; }
 
-    // Step 5 — chart config (only if we have real data + axes)
+    // Step 4 — chart config
+    // Only build chart when we have numeric data (series_columns or y_axis is numeric)
     let chart: ChartConfig | null = null;
-    if (tableRows.length > 0 && viz.chart_type && viz.x_axis && viz.y_axis) {
+    if (
+      tableRows.length > 0 &&
+      viz.chart_type &&
+      viz.x_axis &&
+      viz.y_axis &&
+      // Only render bar/line charts when y_axis has numeric values
+      tableRows.some((r: any) => typeof r[viz.y_axis] === 'number')
+    ) {
       chart = {
         chart_type:   String(viz.chart_type),
         chart_title:  String(viz.chart_title  || ''),
@@ -304,8 +327,11 @@ const AssistantContent: React.FC<{
         />
       )}
 
-      {p.explanation && !p.answer && (
-        <p style={{ margin: 0, color: '#a0a0c0' }}>{p.explanation}</p>
+      {/* Always show explanation — important context even when data is empty */}
+      {p.explanation && (
+        <p style={{ margin: '0 0 8px', color: '#9090b0', fontStyle: 'italic', fontSize: 13 }}>
+          {p.explanation}
+        </p>
       )}
 
       {p.tableRows.length > 0 && <DataTable rows={p.tableRows} />}
