@@ -7,7 +7,7 @@ import DateFilterBar from './DateFilterBar';
 // FIXED (belong to the VDTSIA assistant — never change):
 //   assistId:  3514581148
 //   connector: 238893540
-//   tables:    synthetic_data_kpi, qac_kpi_baseline_data
+//   tables:    vt_overall_data, vt_overview_vehicle_info, vt_dtc_datagrid, ...
 //
 // DYNAMIC (must match the logged-in user's authtoken — read from Redux):
 //   spaceKey:  user?.user?.spaceKey   ← server validates this == authtoken.space
@@ -16,14 +16,38 @@ import DateFilterBar from './DateFilterBar';
 const BIZVIZ_ENDPOINT  = '/bizviz-proxy/llmService';
 const BIZVIZ_ASSIST_ID = '3514581148';
 const BIZVIZ_CONNECTOR = '238893540';
-const BIZVIZ_TABLES    = ['synthetic_data_kpi', 'qac_kpi_baseline_data'];
+const BIZVIZ_TABLES = [
+  'vt_overall_data',          // per-trip KPIs: harsh events, fuel, speed, CO2
+  'vt_overview_vehicle_info', // static vehicle info: model, variant, fuel type
+  'vt_overview_veh_usage',    // vehicle usage summary: trips, distance, hours
+  'vt_dtc_all_occ_count',     // DTC fault occurrence counts
+  'vt_dtc_datagrid',          // DTC fault detail table
+  'vt_dtc_location_map',      // DTC fault locations
+  'vt_dtc_ststus_count',      // DTC status counts
+  'vt_dtc_tile',              // DTC tile summary
+  'vt_dtc_trend',             // DTC trend over time
+  'vt_fuel_events',           // fuel fill/drain events
+  'vt_ac_dist',               // AC temperature distribution
+  'vt_turn_perc',             // turn percentage data
+];
 const BIZVIZ_DESCRIPTION =
-  'ROLE: Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) PLATFORM: Ravity Digital Twin Dashboard — Maruti Suzuki Victoris Project ARCHITECTURE: Privacy-first, SQL-native, on-premise execution MARKET: India | STANDARDS: BS6 / ARAI | OEM: Maruti Suzuki  You are a specialised automotive intelligence agent. You MUST ONLY query the two connected collections: (1) synthetic_data_kpi — contains per-trip KPI data with fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, idle_time, ac_usage_frequency, ac_usage_duration, trip_id, trip_start_time, trip_end_time, process_date, altitude_median, gsm_strength_per, speed_distribution_0_20_kmh, speed_distribution_20_60_kmh, speed_distribution_60_80_kmh, speed_distribution_80_100_kmh, speed_distribution_100_120_kmh, speed_distribution_120_140_kmh. (2) qac_kpi_baseline_data — contains fleet baseline averages with fields: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, overspeeding_count, total_distance, total_trip_duration, average_speed, fuel_efficiency, co2_emissions, ac_usage, total_idle_time, mileage_loss. NEVER query vt_vehicle_info, vt_dtc_info or any other collection — they are not connected. The context prefix [VIN: x | Period: x to y] in the question tells you which VIN and date range to filter on using the vin field and process_date field in synthetic_data_kpi. Every number you state must come directly from the query results.';
+  'You are the Ravity Vehicle Digital Twin SQL Intelligence Agent (VDTSIA) for Maruti Suzuki. ' +
+  'Query ONLY these collections: ' +
+  'vt_overall_data (per-trip KPIs: vin, harsh_acc_count, harsh_brk_count, harsh_turn_count, ' +
+  'overspeeding_count, fuel_efficiency, trip_distance, avg_speed, max_speed, co2_emissions, ' +
+  'idle_time, process_date, trip_start_time, trip_end_time), ' +
+  'vt_overview_vehicle_info (static info: vin, vehicle_model, vehicle_variant, fuel_type, engine_type, ' +
+  'transmission_type, manuf_date, sale_date, last_serv, can_id), ' +
+  'vt_overview_veh_usage (usage: vin, total_trips, total_distance, engine_hours, start_mileage, end_mileage), ' +
+  'vt_dtc_datagrid and vt_dtc_tile (DTC fault codes), ' +
+  'vt_fuel_events (fuel events), vt_ac_dist (AC data), vt_turn_perc (turns). ' +
+  'The context prefix gives you vin and date range to filter on. ' +
+  'Use vin field for VIN filter and process_date for date range in vt_overall_data.';
 const INITIAL_SUGGESTIONS = [
   'Show harsh acceleration, braking and overspeeding counts for this VIN',
-  'What is the fuel efficiency for this vehicle compared to fleet baseline?',
-  'Show speed distribution breakdown for this VIN',
-  'What is the total distance, trips and CO2 emissions for this vehicle?',
+  'What is the vehicle model, variant and fuel type for this VIN?',
+  'Show all DTC fault codes for this vehicle',
+  'What is the total distance, trips and fuel efficiency for this VIN?',
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -302,7 +326,7 @@ const AssistantContent: React.FC<{
           <p style={{ margin: '0 0 8px', color: '#e08060', fontWeight: 600 }}>⚠️ No data returned</p>
           <p style={{ margin: '0 0 6px' }}>This may be because:</p>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            <li>The question requires data not in the connected tables (<code>synthetic_data_kpi</code>, <code>qac_kpi_baseline_data</code>)</li>
+            <li>The question requires a collection not in the connector — try asking about harsh events, fuel, speed, DTC codes or vehicle info</li>
             <li>The selected VIN has no records in the date range</li>
             <li>Try asking about: harsh events, fuel efficiency, speed, distance, CO₂ or baseline comparisons</li>
           </ul>
