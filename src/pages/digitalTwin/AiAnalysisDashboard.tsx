@@ -99,27 +99,23 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
       setFn(ratio * 100);
     };
 
-  // ── "Bar" tab = VERTICAL bars (values on Y axis, VINs on X axis)
-  //    Bars stand upright, VIN labels along the bottom
-  //    Scrubber: horizontal bar underneath (scroll left/right through VINs)
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── "Bar" tab = VERTICAL bars ─────────────────────────────────────────────
   const renderBarV = () => {
-    const BAR_W = 52, GAP = 14, H = 280, LBL_H = 60, PAD_L = 52, PAD_T = 24, SCRUB_H = 12;
-    const totalW    = PAD_L + sorted.length * (BAR_W + GAP) + 20;
-    const viewport  = 580;
-    const maxScroll = Math.max(0, totalW - viewport);
+    const BAR_W = 44, GAP = 12, H = 260, LBL_H = 58, PAD_L = 46, PAD_T = 20, SCRUB_H = 12;
+    const svgW      = PAD_L + sorted.length * (BAR_W + GAP) + 20;
+    const maxScroll = Math.max(0, svgW - 580);
     const offset    = Math.round((hScroll / 100) * maxScroll);
-    const thumbW    = maxScroll > 0 ? Math.max(16, (viewport / totalW) * 100) : 100;
+    const thumbW    = maxScroll > 0 ? Math.max(16, (580 / svgW) * 100) : 100;
     const thumbL    = maxScroll > 0 ? (hScroll / 100) * (100 - thumbW) : 0;
 
     return (
       <div>
         <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height: PAD_T+H+LBL_H }}>
+          border:`1px solid ${C.border}`, height: PAD_T+H+LBL_H, position:'relative' }}>
           <svg
-            viewBox={`${offset} 0 ${viewport} ${PAD_T+H+LBL_H}`}
-            style={{ display:'block', width:'100%', height:PAD_T+H+LBL_H }}
-            preserveAspectRatio="none">
+            width={svgW}
+            height={PAD_T+H+LBL_H}
+            style={{ display:'block', position:'absolute', left: -offset, top:0 }}>
             <defs>
               <linearGradient id="gBV" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={C.a2}/>
@@ -127,24 +123,24 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
               </linearGradient>
             </defs>
             {/* Y-axis */}
-            <line x1={offset+PAD_L} y1={PAD_T} x2={offset+PAD_L} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={2}/>
-            {/* Y gridlines + labels (follow viewport) */}
+            <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={1.5}/>
+            {/* Y gridlines + labels — offset so they stay visible in viewport */}
             {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
               const y = PAD_T + H - f*H;
               return (
                 <g key={i}>
-                  <line x1={offset+PAD_L} y1={y} x2={offset+viewport} y2={y}
-                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
-                    strokeDasharray={f===0?'':'4,4'}/>
-                  <text x={offset+PAD_L-8} y={y+4} textAnchor="end"
-                    fill={C.subtle} fontSize={10} fontFamily="monospace">{fmt(f*vMax)}</text>
+                  <line x1={PAD_L} y1={y} x2={svgW} y2={y}
+                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?1.5:0.8}
+                    strokeDasharray={f===0?'':'3,3'}/>
+                  <text x={PAD_L-5} y={y+3.5} textAnchor="end"
+                    fill={C.subtle} fontSize={8} fontFamily="monospace">{fmt(f*vMax)}</text>
                 </g>
               );
             })}
             {/* X-axis */}
-            <line x1={offset+PAD_L} y1={PAD_T+H} x2={offset+viewport} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={2}/>
+            <line x1={PAD_L} y1={PAD_T+H} x2={svgW} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={1.5}/>
             {/* Bars */}
             {sorted.map((row, i) => {
               const val  = vals[i];
@@ -154,27 +150,23 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
               const clr  = barRgb(i, sorted.length);
               return (
                 <g key={i}>
-                  {/* Drop shadow */}
-                  <rect x={x+3} y={y+4} width={BAR_W} height={barH} rx={6} fill="rgba(0,0,0,0.06)"/>
-                  {/* Bar */}
-                  <rect x={x} y={y} width={BAR_W} height={barH} rx={6} fill={clr}>
+                  <rect x={x+2} y={y+3} width={BAR_W} height={barH} rx={5} fill="rgba(0,0,0,0.05)"/>
+                  <rect x={x} y={y} width={BAR_W} height={barH} rx={5} fill={clr}>
                     <title>{`#${i+1} ${row[xKey]}: ${val.toLocaleString()}`}</title>
                   </rect>
-                  {/* Top highlight */}
-                  <rect x={x+4} y={y+3} width={BAR_W-8} height={6} rx={3} fill="rgba(255,255,255,0.3)"/>
-                  {/* Value — inside if tall, above if short */}
-                  {barH >= 28 ? (
-                    <text x={x+BAR_W/2} y={y+18} textAnchor="middle"
-                      fill="#fff" fontSize={10} fontWeight="800">{fmt(val)}</text>
+                  <rect x={x+4} y={y+3} width={BAR_W-8} height={5} rx={2.5} fill="rgba(255,255,255,0.28)"/>
+                  {barH >= 26 ? (
+                    <text x={x+BAR_W/2} y={y+15} textAnchor="middle"
+                      fill="#fff" fontSize={8} fontWeight="700">{fmt(val)}</text>
                   ) : (
-                    <text x={x+BAR_W/2} y={y-7} textAnchor="middle"
-                      fill={C.muted} fontSize={10} fontWeight="700">{fmt(val)}</text>
+                    <text x={x+BAR_W/2} y={y-6} textAnchor="middle"
+                      fill={C.muted} fontSize={8} fontWeight="600">{fmt(val)}</text>
                   )}
-                  {/* VIN label — rotated under X axis */}
-                  <text x={x+BAR_W/2} y={PAD_T+H+20} textAnchor="end"
-                    fill={C.muted} fontSize={9.5}
-                    transform={`rotate(-42,${x+BAR_W/2},${PAD_T+H+20})`}>
-                    {lbl(row[xKey], 14)}
+                  {/* VIN label — rotated, smaller font */}
+                  <text x={x+BAR_W/2} y={PAD_T+H+16} textAnchor="end"
+                    fill={C.muted} fontSize={8}
+                    transform={`rotate(-40,${x+BAR_W/2},${PAD_T+H+16})`}>
+                    {lbl(row[xKey], 13)}
                   </text>
                 </g>
               );
@@ -239,11 +231,11 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
       <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
         {/* Chart */}
         <div style={{ flex:1, overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height:viewport }}>
+          border:`1px solid ${C.border}`, height:viewport, position:'relative' }}>
           <svg
-            viewBox={`0 ${offset} ${SVG_W} ${viewport}`}
-            style={{ display:'block', width:'100%', height:viewport }}
-            preserveAspectRatio="none">
+            width={SVG_W}
+            height={sorted.length * (ROW_H + GAP)}
+            style={{ display:'block', position:'absolute', top:-offset, left:0 }}>
             <defs>
               <linearGradient id="gBH" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stopColor={C.a1}/>
@@ -274,7 +266,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
                     fontWeight="800" fontFamily="monospace">{String(i+1).padStart(2,'0')}</text>
                   {/* VIN label */}
                   <text x={LABEL_W-10} y={y+ROW_H/2+4} textAnchor="end"
-                    fill={C.slate} fontSize={12} fontWeight="500">{lbl(row[xKey], 16)}</text>
+                    fill={C.slate} fontSize={10} fontWeight="500">{lbl(row[xKey], 16)}</text>
                   {/* Track */}
                   <rect x={LABEL_W} y={y+5} width={BAR_AREA} height={ROW_H-10}
                     fill="#e0f2f1" rx={5}/>
@@ -288,7 +280,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
                     rx={3} fill="rgba(255,255,255,0.35)"/>
                   {/* Value */}
                   <text x={LABEL_W+barW+8} y={y+ROW_H/2+4}
-                    fill={C.a1} fontSize={11} fontWeight="800" fontFamily="monospace">{fmt(val)}</text>
+                    fill={C.a1} fontSize={9} fontWeight="700" fontFamily="monospace">{fmt(val)}</text>
                 </g>
               );
             })}
@@ -333,7 +325,7 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
   const renderLine = () => {
     const PAD_L=54, PAD_T=24, PAD_B=56, PAD_R=24, H=260, SCRUB_H=12;
     const viewport  = 580;
-    const DOT_STEP  = 22;                                     // min px per data point
+    const DOT_STEP  = 28;                                     // px per data point — gives labels room
     const totalW    = PAD_L + sorted.length * DOT_STEP + PAD_R;
     const maxScroll = Math.max(0, totalW - viewport);
     const offset    = Math.round((lScroll / 100) * maxScroll);
@@ -355,11 +347,11 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
     return (
       <div>
         <div style={{ overflow:'hidden', borderRadius:8, background:C.bg,
-          border:`1px solid ${C.border}`, height:PAD_T+H+PAD_B }}>
+          border:`1px solid ${C.border}`, height:PAD_T+H+PAD_B, position:'relative' }}>
           <svg
-            viewBox={`${offset} 0 ${viewport} ${PAD_T+H+PAD_B}`}
-            style={{ display:'block', width:'100%', height:PAD_T+H+PAD_B }}
-            preserveAspectRatio="none">
+            width={totalW}
+            height={PAD_T+H+PAD_B}
+            style={{ display:'block', position:'absolute', left:-offset, top:0 }}>
             <defs>
               <linearGradient id="gLA" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={C.a2} stopOpacity="0.25"/>
@@ -367,26 +359,26 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
               </linearGradient>
             </defs>
             {/* Y-axis */}
-            <line x1={offset+PAD_L} y1={PAD_T} x2={offset+PAD_L} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={2}/>
-            {/* Y grid + labels (follow viewport) */}
+            <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={1.5}/>
+            {/* Y grid + labels */}
             {[0,0.2,0.4,0.6,0.8,1].map((f,i) => {
               const y = PAD_T + H - f*H;
               return (
                 <g key={i}>
-                  <line x1={offset+PAD_L} y1={y} x2={offset+viewport} y2={y}
-                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?2:1}
-                    strokeDasharray={f===0?'':'4,4'}/>
-                  <text x={offset+PAD_L-8} y={y+4} textAnchor="end"
-                    fill={C.subtle} fontSize={10} fontFamily="monospace">
+                  <line x1={PAD_L} y1={y} x2={totalW} y2={y}
+                    stroke={f===0?C.border:'#e0f2f1'} strokeWidth={f===0?1.5:0.8}
+                    strokeDasharray={f===0?'':'3,3'}/>
+                  <text x={PAD_L-5} y={y+3.5} textAnchor="end"
+                    fill={C.subtle} fontSize={8} fontFamily="monospace">
                     {fmt(vMin + f*range)}
                   </text>
                 </g>
               );
             })}
             {/* X-axis */}
-            <line x1={offset+PAD_L} y1={PAD_T+H} x2={offset+viewport} y2={PAD_T+H}
-              stroke={C.border} strokeWidth={2}/>
+            <line x1={PAD_L} y1={PAD_T+H} x2={totalW} y2={PAD_T+H}
+              stroke={C.border} strokeWidth={1.5}/>
             {/* Area */}
             {pts.length > 1 && <path d={areaD} fill="url(#gLA)"/>}
             {/* Line */}
@@ -404,13 +396,13 @@ const DataViz: React.FC<{ data: any[]; xKey: string; yKey: string; title?: strin
                 <circle cx={p.x} cy={p.y} r={5} fill={C.bgCard} stroke={C.a1} strokeWidth={2.5}>
                   <title>{`#${i+1} ${p.label}: ${p.val.toLocaleString()}`}</title>
                 </circle>
-                {/* Value above dot */}
-                <text x={p.x} y={p.y-12} textAnchor="middle"
-                  fill={C.a1} fontSize={9.5} fontWeight="700">{fmt(p.val)}</text>
+                {/* Value above dot — only show when DOT_STEP is wide enough */}
+                <text x={p.x} y={p.y-10} textAnchor="middle"
+                  fill={C.a1} fontSize={7.5} fontWeight="700">{fmt(p.val)}</text>
                 {/* X label rotated */}
-                <text x={p.x} y={PAD_T+H+20} textAnchor="end"
-                  fill={C.muted} fontSize={9}
-                  transform={`rotate(-42,${p.x},${PAD_T+H+20})`}>{lbl(p.label, 14)}</text>
+                <text x={p.x} y={PAD_T+H+16} textAnchor="end"
+                  fill={C.muted} fontSize={7.5}
+                  transform={`rotate(-40,${p.x},${PAD_T+H+16})`}>{lbl(p.label, 13)}</text>
               </g>
             ))}
           </svg>
